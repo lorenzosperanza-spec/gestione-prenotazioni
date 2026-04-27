@@ -24,8 +24,8 @@ body {
 
 /* Header */
 .header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: linear-gradient(135deg, #e6f4ea 0%, #c8ead7 100%);
+  color: #0f3d2e;
   padding: 1rem 2rem;
   position: sticky;
   top: 0;
@@ -43,18 +43,19 @@ body {
 }
 
 .header button {
-  background: rgba(255,255,255,0.2);
+  background: rgba(15, 61, 46, 0.1);
+  color: #0f3d2e;
   border: none;
-  color: white;
   padding: 0.5rem 1rem;
   border-radius: 5px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
-.header button:hover, .header button.active {
-  background: white;
-  color: #667eea;
+.header button:hover,
+.header button.active {
+  background: #0f3d2e;
+  color: white;
 }
 
 /* Main */
