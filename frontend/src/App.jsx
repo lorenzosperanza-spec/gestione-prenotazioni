@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import './App.css'
 
-const API_URL = '[gestione-prenotazioni-production.up.railway.app](https://gestione-prenotazioni-production.up.railway.app/api)'
+const API_URL = 'https://gestione-prenotazioni-production.up.railway.app'
 
 function App() {
   const [appartamenti, setAppartamenti] = useState([])
