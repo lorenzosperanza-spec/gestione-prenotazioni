@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import './App.css'
 
-const API_URL = 'https://gestione-prenotazioni-production.up.railway.app'
+//const API_URL = 'https://gestione-prenotazioni-production.up.railway.app'
+const API_URL = 'https://gestione-prenotazioni-production.up.railway.app/api'
 
 function App() {
   const [appartamenti, setAppartamenti] = useState([])
@@ -17,9 +18,9 @@ function App() {
   const caricaDati = async () => {
     try {
       const [appRes, prenRes] = await Promise.all([
-        fetch(`${API_URL}/appartamenti`),
-        fetch(`${API_URL}/prenotazioni`)
-      ])
+  fetch(`${API_URL}/appartamenti`),
+  fetch(`${API_URL}/prenotazioni`)
+])
       setAppartamenti(await appRes.json())
       setPrenotazioni(await prenRes.json())
     } catch (err) {
