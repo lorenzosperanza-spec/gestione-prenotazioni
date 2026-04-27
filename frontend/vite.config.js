@@ -5,10 +5,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
-    allowedHosts: 'all'
+    allowedHosts: 'true'
   },
   preview: {
     host: true,
-    allowedHosts: 'all'
+    allowedHosts: 'true'
   }
 })
