@@ -157,20 +157,47 @@ function Dashboard({ appartamenti, prenotazioni }) {
   )
 }
 
-// Componente Lista Appartamenti
-function ListaAppartamenti({ appartamenti }) {
-  const [filtro, setFiltro] = useState('')
-  
+function ListaAppartamenti({ appartamenti, setAppartamenti }) {
+  const [filtro, setFiltro] = useState('');
+  const [editing, setEditing] = useState(null);
+
   const appartamentiFiltrati = appartamenti.filter(a =>
     a.nome.toLowerCase().includes(filtro.toLowerCase()) ||
     a.via?.toLowerCase().includes(filtro.toLowerCase()) ||
     a.gestore?.toLowerCase().includes(filtro.toLowerCase())
-  )
+  );
+
+  async function saveEdit() {
+    try {
+      const response = await fetch(
+        `https://optimistic-generosity-production-f106.up.railway.app/api/appartamenti/${editing.id}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(editing)
+        }
+      );
+
+      if (!response.ok) throw new Error("Errore aggiornamento");
+
+      const updated = await response.json();
+
+      // aggiorna la lista
+      setAppartamenti(appartamenti.map(a =>
+        a.id === updated.id ? updated : a
+      ));
+
+      setEditing(null);
+    } catch (err) {
+      console.error(err);
+      alert("Errore durante il salvataggio");
+    }
+  }
 
   return (
     <div className="lista-appartamenti">
       <h2>Appartamenti</h2>
-      
+
       <input
         type="text"
         placeholder="Cerca per nome, via o gestore..."
@@ -190,8 +217,10 @@ function ListaAppartamenti({ appartamenti }) {
               <th>Pulizia</th>
               <th>Biancheria</th>
               <th>Logistica</th>
+              <th>Azioni</th>
             </tr>
           </thead>
+
           <tbody>
             {appartamentiFiltrati.map(a => (
               <tr key={a.id}>
@@ -202,13 +231,76 @@ function ListaAppartamenti({ appartamenti }) {
                 <td>€{a.pulizia}</td>
                 <td>€{a.biancheria}</td>
                 <td>€{a.logistica}</td>
+                <td>
+                  <button onClick={() => setEditing(a)}>Modifica</button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {/* MODAL DI MODIFICA */}
+      {editing && (
+        <>
+          <div className="modal-overlay"></div>
+
+          <div className="modal">
+            <h3>Modifica appartamento</h3>
+
+            <label>Nome</label>
+            <input
+              value={editing.nome}
+              onChange={e => setEditing({ ...editing, nome: e.target.value })}
+            />
+
+            <label>Via</label>
+            <input
+              value={editing.via}
+              onChange={e => setEditing({ ...editing, via: e.target.value })}
+            />
+
+            <label>Gestore</label>
+            <input
+              value={editing.gestore}
+              onChange={e => setEditing({ ...editing, gestore: e.target.value })}
+            />
+
+            <label>Letti</label>
+            <input
+              type="number"
+              value={editing.letti_max}
+              onChange={e => setEditing({ ...editing, letti_max: e.target.value })}
+            />
+
+            <label>Pulizia</label>
+            <input
+              type="number"
+              value={editing.pulizia}
+              onChange={e => setEditing({ ...editing, pulizia: e.target.value })}
+            />
+
+            <label>Biancheria</label>
+            <input
+              type="number"
+              value={editing.biancheria}
+              onChange={e => setEditing({ ...editing, biancheria: e.target.value })}
+            />
+
+            <label>Logistica</label>
+            <input
+              type="number"
+              value={editing.logistica}
+              onChange={e => setEditing({ ...editing, logistica: e.target.value })}
+            />
+
+            <button onClick={saveEdit}>Salva</button>
+            <button onClick={() => setEditing(null)}>Annulla</button>
+          </div>
+        </>
+      )}
     </div>
-  )
+  );
 }
 
 // Componente Lista Prenotazioni
