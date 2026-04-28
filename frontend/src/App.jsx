@@ -64,11 +64,12 @@ function App() {
             + Nuova Prenotazione
           </button>
           <button 
-            className={vista === 'nuova' ? 'active' : ''} 
-            onClick={() => setVista('nuova')}
-          >
-            + Nuovo appartamento
-          </button>
+  className={vista === 'nuovo_app' ? 'active' : ''} 
+  onClick={() => setVista('nuovo_app')}
+>
+  + Nuovo appartamento
+</button>
+
         </nav>
       </header>
 
