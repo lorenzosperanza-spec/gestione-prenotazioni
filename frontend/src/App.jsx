@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import './App.css'
 
-//const API_URL = 'https://gestione-prenotazioni-production.up.railway.app'
-const API_URL = 'https://gestione-prenotazioni-production.up.railway.app/api'
+const API_URL = '[gestione-prenotazioni-production.up.railway.app](https://gestione-prenotazioni-production.up.railway.app/api)'
 
 function App() {
   const [appartamenti, setAppartamenti] = useState([])
@@ -10,7 +9,6 @@ function App() {
   const [vista, setVista] = useState('dashboard')
   const [loading, setLoading] = useState(true)
 
-  // Carica dati all'avvio
   useEffect(() => {
     caricaDati()
   }, [])
@@ -18,9 +16,9 @@ function App() {
   const caricaDati = async () => {
     try {
       const [appRes, prenRes] = await Promise.all([
-  fetch(`${API_URL}/appartamenti`),
-  fetch(`${API_URL}/prenotazioni`)
-])
+        fetch(`${API_URL}/appartamenti`),
+        fetch(`${API_URL}/prenotazioni`)
+      ])
       setAppartamenti(await appRes.json())
       setPrenotazioni(await prenRes.json())
     } catch (err) {
@@ -39,37 +37,40 @@ function App() {
       <header className="header">
         <h1>🏠 Gestione Prenotazioni</h1>
         <nav>
-          <button 
-            className={vista === 'dashboard' ? 'active' : ''} 
+          <button
+            className={vista === 'dashboard' ? 'active' : ''}
             onClick={() => setVista('dashboard')}
           >
             Dashboard
           </button>
-          <button 
-            className={vista === 'appartamenti' ? 'active' : ''} 
+
+          <button
+            className={vista === 'appartamenti' ? 'active' : ''}
             onClick={() => setVista('appartamenti')}
           >
             Appartamenti ({appartamenti.length})
           </button>
-          <button 
-            className={vista === 'prenotazioni' ? 'active' : ''} 
+
+          <button
+            className={vista === 'prenotazioni' ? 'active' : ''}
             onClick={() => setVista('prenotazioni')}
           >
             Prenotazioni ({prenotazioni.length})
           </button>
-          <button 
-            className={vista === 'nuova' ? 'active' : ''} 
+
+          <button
+            className={vista === 'nuova' ? 'active' : ''}
             onClick={() => setVista('nuova')}
           >
             + Nuova Prenotazione
           </button>
-          <button 
-  className={vista === 'nuovo_app' ? 'active' : ''} 
-  onClick={() => setVista('nuovo_app')}
->
-  + Nuovo appartamento
-</button>
 
+          <button
+            className={vista === 'nuovo_app' ? 'active' : ''}
+            onClick={() => setVista('nuovo_app')}
+          >
+            + Nuovo Appartamento
+          </button>
         </nav>
       </header>
 
@@ -77,42 +78,59 @@ function App() {
         {vista === 'dashboard' && (
           <Dashboard appartamenti={appartamenti} prenotazioni={prenotazioni} />
         )}
+
         {vista === 'appartamenti' && (
           <ListaAppartamenti appartamenti={appartamenti} />
         )}
+
         {vista === 'prenotazioni' && (
           <ListaPrenotazioni prenotazioni={prenotazioni} onUpdate={caricaDati} />
         )}
+
         {vista === 'nuova' && (
-          <NuovaPrenotazione 
-            appartamenti={appartamenti} 
-            onSave={() => { caricaDati(); setVista('prenotazioni'); }} 
+          <NuovaPrenotazione
+            appartamenti={appartamenti}
+            onSave={() => {
+              caricaDati()
+              setVista('prenotazioni')
+            }}
           />
         )}
-        {vista === 'nuovo_app' && (
-  <NuovoAppartamento onSave={() => { caricaDati(); setVista('appartamenti'); }} />
-)}
 
+        {vista === 'nuovo_app' && (
+          <NuovoAppartamento
+            onSave={() => {
+              caricaDati()
+              setVista('appartamenti')
+            }}
+          />
+        )}
       </main>
     </div>
   )
 }
 
-// Componente Dashboard
+/* ---------- DASHBOARD ---------- */
 function Dashboard({ appartamenti, prenotazioni }) {
   const oggi = new Date().toISOString().split('T')[0]
-  
-  const prenotazioniOggi = prenotazioni.filter(p => 
-    p.check_in <= oggi && p.check_out >= oggi
+  const prenotazioniOggi = prenotazioni.filter(
+    (p) => p.check_in <= oggi && p.check_out >= oggi
   )
-  
-  const checkInOggi = prenotazioni.filter(p => p.check_in === oggi)
-  const checkOutOggi = prenotazioni.filter(p => p.check_out === oggi)
+  const checkInOggi = prenotazioni.filter((p) => p.check_in === oggi)
+  const checkOutOggi = prenotazioni.filter((p) => p.check_out === oggi)
 
   return (
     <div className="dashboard">
-      <h2>Dashboard - {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h2>
-      
+      <h2>
+        Dashboard -{' '}
+        {new Date().toLocaleDateString('it-IT', {
+          weekday: 'long',
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        })}
+      </h2>
+
       <div className="stats-grid">
         <div className="stat-card">
           <h3>🏠 Appartamenti</h3>
@@ -131,51 +149,23 @@ function Dashboard({ appartamenti, prenotazioni }) {
           <p className="stat-number">{checkOutOggi.length}</p>
         </div>
       </div>
-
-      {checkInOggi.length > 0 && (
-        <div className="section">
-          <h3>✅ Check-in di Oggi</h3>
-          <ul className="event-list">
-            {checkInOggi.map(p => (
-              <li key={p.id} className="event-item green">
-                <strong>{p.appartamento_nome}</strong> - {p.guest_name} ({p.num_ospiti} ospiti)
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {checkOutOggi.length > 0 && (
-        <div className="section">
-          <h3>🚪 Check-out di Oggi</h3>
-          <ul className="event-list">
-            {checkOutOggi.map(p => (
-              <li key={p.id} className="event-item orange">
-                <strong>{p.appartamento_nome}</strong> - {p.guest_name}
-                <span className="pulizia-tag">Pulizia: €{p.pulizia}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </div>
   )
 }
 
+/* ---------- LISTA APPARTAMENTI ---------- */
 function ListaAppartamenti({ appartamenti }) {
-  const [filtro, setFiltro] = useState('');
+  const [filtro, setFiltro] = useState('')
 
-  const appartamentiFiltrati = appartamenti.filter(a =>
-    a.nome?.toLowerCase().includes(filtro.toLowerCase()) ||
-    a.via?.toLowerCase().includes(filtro.toLowerCase()) ||
-    a.gestore?.toLowerCase().includes(filtro.toLowerCase()) ||
-    a.owner?.toLowerCase().includes(filtro.toLowerCase())
-  );
+  const appartamentiFiltrati = appartamenti.filter((a) =>
+    [a.nome, a.via, a.gestore, a.owner]
+      .filter(Boolean)
+      .some((v) => v.toLowerCase().includes(filtro.toLowerCase()))
+  )
 
   return (
     <div className="lista-appartamenti">
       <h2>Appartamenti</h2>
-
       <input
         type="text"
         placeholder="Cerca per nome, via, owner o gestore..."
@@ -201,29 +191,19 @@ function ListaAppartamenti({ appartamenti }) {
             </tr>
           </thead>
           <tbody>
-            {appartamentiFiltrati.map(a => (
+            {appartamentiFiltrati.map((a) => (
               <tr key={a.id}>
                 <td><strong>{a.nome}</strong></td>
                 <td>{a.via || '-'}</td>
                 <td>{a.owner || '-'}</td>
                 <td>{a.gestore || '-'}</td>
-                <td>
-                  {a.prezzo != null ? `€${Number(a.prezzo).toFixed(2)}` : '-'}
-                </td>
-                <td>
-                  {a.biancheria != null ? `€${Number(a.biancheria).toFixed(2)}` : '-'}
-                </td>
-                <td>
-                  {a.logistica != null ? `${Number(a.logistica)} min` : '-'}
-                </td>
-                <td>
-                  {a.pulizia != null ? `${Number(a.pulizia)} min` : '-'}
-                </td>
+                <td>{a.prezzo != null ? `€${Number(a.prezzo).toFixed(2)}` : '-'}</td>
+                <td>{a.biancheria != null ? `€${Number(a.biancheria).toFixed(2)}` : '-'}</td>
+                <td>{a.logistica != null ? `${Number(a.logistica)} min` : '-'}</td>
+                <td>{a.pulizia != null ? `${Number(a.pulizia)} min` : '-'}</td>
                 <td>{a.letti_max || '-'}</td>
                 <td>
-                  <button className="btn-delete">
-                    Modifica
-                  </button>
+                  <button className="btn-delete">Modifica</button>
                 </td>
               </tr>
             ))}
@@ -231,77 +211,13 @@ function ListaAppartamenti({ appartamenti }) {
         </table>
       </div>
     </div>
-  );
+  )
 }
 
-        {/* MODAL DI MODIFICA */}
-      {editing && (
-        <>
-          <div className="modal-overlay"></div>
-
-          <div className="modal">
-            <h3>Modifica appartamento</h3>
-
-            <label>Nome</label>
-            <input
-              value={editing.nome}
-              onChange={e => setEditing({ ...editing, nome: e.target.value })}
-            />
-
-            <label>Via</label>
-            <input
-              value={editing.via}
-              onChange={e => setEditing({ ...editing, via: e.target.value })}
-            />
-
-            <label>Gestore</label>
-            <input
-              value={editing.gestore}
-              onChange={e => setEditing({ ...editing, gestore: e.target.value })}
-            />
-
-            <label>Letti</label>
-            <input
-              type="number"
-              value={editing.letti_max}
-              onChange={e => setEditing({ ...editing, letti_max: e.target.value })}
-            />
-
-            <label>Pulizia</label>
-            <input
-              type="number"
-              value={editing.pulizia}
-              onChange={e => setEditing({ ...editing, pulizia: e.target.value })}
-            />
-
-            <label>Biancheria</label>
-            <input
-              type="number"
-              value={editing.biancheria}
-              onChange={e => setEditing({ ...editing, biancheria: e.target.value })}
-            />
-
-            <label>Logistica</label>
-            <input
-              type="number"
-              value={editing.logistica}
-              onChange={e => setEditing({ ...editing, logistica: e.target.value })}
-            />
-
-            <button onClick={saveEdit}>Salva</button>
-            <button onClick={() => setEditing(null)}>Annulla</button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-// Componente Lista Prenotazioni
+/* ---------- LISTA PRENOTAZIONI ---------- */
 function ListaPrenotazioni({ prenotazioni, onUpdate }) {
   const eliminaPrenotazione = async (id) => {
     if (!confirm('Sei sicuro di voler eliminare questa prenotazione?')) return
-    
     try {
       await fetch(`${API_URL}/prenotazioni/${id}`, { method: 'DELETE' })
       onUpdate()
@@ -313,7 +229,7 @@ function ListaPrenotazioni({ prenotazioni, onUpdate }) {
   return (
     <div className="lista-prenotazioni">
       <h2>Prenotazioni</h2>
-      
+
       {prenotazioni.length === 0 ? (
         <p className="empty-message">Nessuna prenotazione presente</p>
       ) : (
@@ -331,7 +247,7 @@ function ListaPrenotazioni({ prenotazioni, onUpdate }) {
               </tr>
             </thead>
             <tbody>
-              {prenotazioni.map(p => (
+              {prenotazioni.map((p) => (
                 <tr key={p.id}>
                   <td><strong>{p.appartamento_nome}</strong></td>
                   <td>{p.guest_name}</td>
@@ -339,12 +255,10 @@ function ListaPrenotazioni({ prenotazioni, onUpdate }) {
                   <td>{new Date(p.check_out).toLocaleDateString('it-IT')}</td>
                   <td>{p.num_ospiti}</td>
                   <td>
-                    <span className={`stato-badge ${p.stato}`}>
-                      {p.stato}
-                    </span>
+                    <span className={`stato-badge ${p.stato}`}>{p.stato}</span>
                   </td>
                   <td>
-                    <button 
+                    <button
                       className="btn-delete"
                       onClick={() => eliminaPrenotazione(p.id)}
                     >
@@ -361,7 +275,7 @@ function ListaPrenotazioni({ prenotazioni, onUpdate }) {
   )
 }
 
-// Componente Nuova Prenotazione
+/* ---------- NUOVA PRENOTAZIONE ---------- */
 function NuovaPrenotazione({ appartamenti, onSave }) {
   const [form, setForm] = useState({
     appartamento_id: '',
@@ -376,14 +290,12 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setSaving(true)
-    
     try {
       const res = await fetch(`${API_URL}/prenotazioni`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form)
       })
-      
       if (res.ok) {
         onSave()
       } else {
@@ -400,17 +312,16 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
   return (
     <div className="nuova-prenotazione">
       <h2>Nuova Prenotazione</h2>
-      
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <label>Appartamento *</label>
           <select
             required
             value={form.appartamento_id}
-            onChange={(e) => setForm({...form, appartamento_id: e.target.value})}
+            onChange={(e) => setForm({ ...form, appartamento_id: e.target.value })}
           >
             <option value="">Seleziona appartamento...</option>
-            {appartamenti.map(a => (
+            {appartamenti.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.nome} - {a.via}
               </option>
@@ -424,7 +335,7 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
             type="text"
             required
             value={form.guest_name}
-            onChange={(e) => setForm({...form, guest_name: e.target.value})}
+            onChange={(e) => setForm({ ...form, guest_name: e.target.value })}
             placeholder="Nome e cognome"
           />
         </div>
@@ -436,17 +347,16 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
               type="date"
               required
               value={form.check_in}
-              onChange={(e) => setForm({...form, check_in: e.target.value})}
+              onChange={(e) => setForm({ ...form, check_in: e.target.value })}
             />
           </div>
-          
           <div className="form-group">
             <label>Check-out *</label>
             <input
               type="date"
               required
               value={form.check_out}
-              onChange={(e) => setForm({...form, check_out: e.target.value})}
+              onChange={(e) => setForm({ ...form, check_out: e.target.value })}
             />
           </div>
         </div>
@@ -457,7 +367,9 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
             type="number"
             min="1"
             value={form.num_ospiti}
-            onChange={(e) => setForm({...form, num_ospiti: parseInt(e.target.value)})}
+            onChange={(e) =>
+              setForm({ ...form, num_ospiti: parseInt(e.target.value) })
+            }
           />
         </div>
 
@@ -465,7 +377,7 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
           <label>Note</label>
           <textarea
             value={form.note}
-            onChange={(e) => setForm({...form, note: e.target.value})}
+            onChange={(e) => setForm({ ...form, note: e.target.value })}
             placeholder="Note aggiuntive..."
           />
         </div>
@@ -477,6 +389,8 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
     </div>
   )
 }
+
+/* ---------- NUOVO APPARTAMENTO ---------- */
 function NuovoAppartamento({ onSave }) {
   const [form, setForm] = useState({
     owner: '',
@@ -488,30 +402,30 @@ function NuovoAppartamento({ onSave }) {
     logistica: '',
     pulizia: '',
     letti_max: ''
-  });
-  const [saving, setSaving] = useState(false);
+  })
+  const [saving, setSaving] = useState(false)
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setSaving(true);
+    e.preventDefault()
+    setSaving(true)
     try {
-      const res = await fetch('[gestione-prenotazioni-production.up.railway.app](https://gestione-prenotazioni-production.up.railway.app/api/appartamenti)', {
+      const res = await fetch(`${API_URL}/appartamenti`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form)
-      });
+      })
       if (res.ok) {
-        alert('Appartamento aggiunto con successo!');
-        onSave();
+        alert('Appartamento aggiunto con successo!')
+        onSave()
       } else {
-        alert('Errore nell\'inserimento dei dati');
+        alert('Errore nell\'inserimento dei dati')
       }
     } catch (err) {
-      console.error(err);
+      console.error(err)
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   return (
     <div className="nuovo-appartamento">
@@ -534,7 +448,7 @@ function NuovoAppartamento({ onSave }) {
         </button>
       </form>
     </div>
-  );
+  )
 }
 
 export default App
