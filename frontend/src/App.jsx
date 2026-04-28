@@ -170,7 +170,7 @@ function ListaAppartamenti({ appartamenti, setAppartamenti }) {
   async function saveEdit() {
     try {
       const response = await fetch(
-        `https://optimistic-generosity-production-f106.up.railway.app/api/appartamenti/${editing.id}`,
+        `https://gestione-prenotazioni-production.up.railway.app/api/appartamenti/${editing.id}`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
