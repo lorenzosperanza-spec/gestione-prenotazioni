@@ -80,20 +80,17 @@ app.put('/api/appartamenti/:id', async (req, res) => {
     const { owner, gestore, via, nome, prezzo, biancheria, logistica, pulizia, letti_max } = req.body;
     const result = await pool.query(
       `UPDATE appartamenti 
-       SET owner = $1, gestore = $2, via = $3, nome = $4, prezzo = $5, 
-           biancheria = $6, logistica = $7, pulizia = $8, letti_max = $9
-       WHERE id = $10 RETURNING *`,
+       SET owner=$1, gestore=$2, via=$3, nome=$4, prezzo=$5, biancheria=$6, logistica=$7, pulizia=$8, letti_max=$9
+       WHERE id=$10 RETURNING *`,
       [owner, gestore, via, nome, prezzo, biancheria, logistica, pulizia, letti_max, id]
     );
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Appartamento non trovato' });
-    }
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Errore nell\'aggiornamento appartamento' });
+    res.status(500).json({ error: 'Errore aggiornamento appartamento' });
   }
 });
+
 
 // DELETE appartamento
 app.delete('/api/appartamenti/:id', async (req, res) => {
