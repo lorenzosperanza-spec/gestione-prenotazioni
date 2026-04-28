@@ -488,5 +488,64 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
     </div>
   )
 }
+function NuovoAppartamento({ onSave }) {
+  const [form, setForm] = useState({
+    owner: '',
+    gestore: '',
+    via: '',
+    nome: '',
+    prezzo: '',
+    biancheria: '',
+    logistica: '',
+    pulizia: '',
+    letti_max: ''
+  });
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await fetch('[gestione-prenotazioni-production.up.railway.app](https://gestione-prenotazioni-production.up.railway.app/api/appartamenti)', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form)
+      });
+      if (res.ok) {
+        alert('Appartamento aggiunto con successo!');
+        onSave();
+      } else {
+        alert('Errore nell\'inserimento dei dati');
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="nuovo-appartamento">
+      <h2>Nuovo Appartamento</h2>
+      <form onSubmit={handleSubmit}>
+        {['owner','gestore','via','nome','prezzo','biancheria','logistica','pulizia','letti_max'].map(field => (
+          <div className="form-group" key={field}>
+            <label>{field.toUpperCase()}</label>
+            <input 
+              type={['prezzo','biancheria','logistica','pulizia','letti_max'].includes(field) ? 'number' : 'text'}
+              step="0.01"
+              value={form[field]}
+              onChange={(e) => setForm({...form, [field]: e.target.value})}
+              required={field === 'nome'}
+            />
+          </div>
+        ))}
+        <button type="submit" className="btn-save" disabled={saving}>
+          {saving ? 'Salvataggio...' : 'Salva Appartamento'}
+        </button>
+      </form>
+    </div>
+  );
+}
 
 export default App
