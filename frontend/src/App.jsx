@@ -89,6 +89,10 @@ function App() {
             onSave={() => { caricaDati(); setVista('prenotazioni'); }} 
           />
         )}
+        {vista === 'nuovo_app' && (
+  <NuovoAppartamento onSave={() => { caricaDati(); setVista('appartamenti'); }} />
+)}
+
       </main>
     </div>
   )
