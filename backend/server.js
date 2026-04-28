@@ -24,6 +24,10 @@ pool.connect((err, client, release) => {
     release();
   }
 });
+pool.query("SELECT current_database()", (err, result) => {
+  console.log("BACKEND STA USANDO IL DB:", result?.rows);
+});
+
 
 // ============ ROUTES APPARTAMENTI ============
 
