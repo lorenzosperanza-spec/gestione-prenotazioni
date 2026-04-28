@@ -162,7 +162,78 @@ function Dashboard({ appartamenti, prenotazioni }) {
   )
 }
 
-function ListaAppartamenti({ appartamenti, setAppartamenti }) {
+function ListaAppartamenti({ appartamenti }) {
+  const [filtro, setFiltro] = useState('');
+
+  const appartamentiFiltrati = appartamenti.filter(a =>
+    a.nome?.toLowerCase().includes(filtro.toLowerCase()) ||
+    a.via?.toLowerCase().includes(filtro.toLowerCase()) ||
+    a.gestore?.toLowerCase().includes(filtro.toLowerCase()) ||
+    a.owner?.toLowerCase().includes(filtro.toLowerCase())
+  );
+
+  return (
+    <div className="lista-appartamenti">
+      <h2>Appartamenti</h2>
+
+      <input
+        type="text"
+        placeholder="Cerca per nome, via, owner o gestore..."
+        value={filtro}
+        onChange={(e) => setFiltro(e.target.value)}
+        className="search-input"
+      />
+
+      <div className="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Appartamento</th>
+              <th>Via</th>
+              <th>Owner</th>
+              <th>Gestore</th>
+              <th>Prezzo (€)</th>
+              <th>Biancheria (€)</th>
+              <th>Logistica (min)</th>
+              <th>Pulizia (min)</th>
+              <th>Letti Max</th>
+              <th>Azioni</th>
+            </tr>
+          </thead>
+          <tbody>
+            {appartamentiFiltrati.map(a => (
+              <tr key={a.id}>
+                <td><strong>{a.nome}</strong></td>
+                <td>{a.via || '-'}</td>
+                <td>{a.owner || '-'}</td>
+                <td>{a.gestore || '-'}</td>
+                <td>
+                  {a.prezzo != null ? `€${Number(a.prezzo).toFixed(2)}` : '-'}
+                </td>
+                <td>
+                  {a.biancheria != null ? `€${Number(a.biancheria).toFixed(2)}` : '-'}
+                </td>
+                <td>
+                  {a.logistica != null ? `${Number(a.logistica)} min` : '-'}
+                </td>
+                <td>
+                  {a.pulizia != null ? `${Number(a.pulizia)} min` : '-'}
+                </td>
+                <td>{a.letti_max || '-'}</td>
+                <td>
+                  <button className="btn-delete">
+                    Modifica
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
   const [filtro, setFiltro] = useState('');
   const [editing, setEditing] = useState(null);
 
