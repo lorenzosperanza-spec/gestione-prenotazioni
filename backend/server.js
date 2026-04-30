@@ -69,6 +69,9 @@ app.post('/api/appartamenti', async (req, res) => {
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error(err);
+    if (err.code === '23505') {
+      return res.status(400).json({ error: `Esiste già un appartamento con il nome "${req.body.nome}". Usa un nome diverso.` });
+    }
     res.status(500).json({ error: 'Errore nella creazione appartamento' });
   }
 });
@@ -84,13 +87,18 @@ app.put('/api/appartamenti/:id', async (req, res) => {
        WHERE id=$10 RETURNING *`,
       [owner, gestore, via, nome, prezzo, biancheria, logistica, pulizia, letti_max, id]
     );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Appartamento non trovato' });
+    }
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
+    if (err.code === '23505') {
+      return res.status(400).json({ error: `Esiste già un appartamento con il nome "${req.body.nome}". Usa un nome diverso.` });
+    }
     res.status(500).json({ error: 'Errore aggiornamento appartamento' });
   }
 });
-
 
 // DELETE appartamento
 app.delete('/api/appartamenti/:id', async (req, res) => {
