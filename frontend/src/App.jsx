@@ -37,38 +37,19 @@ function App() {
       <header className="header">
         <h1>🏠 Gestione Prenotazioni</h1>
         <nav>
-          <button
-            className={vista === 'dashboard' ? 'active' : ''}
-            onClick={() => setVista('dashboard')}
-          >
+          <button className={vista === 'dashboard' ? 'active' : ''} onClick={() => setVista('dashboard')}>
             Dashboard
           </button>
-
-          <button
-            className={vista === 'appartamenti' ? 'active' : ''}
-            onClick={() => setVista('appartamenti')}
-          >
+          <button className={vista === 'appartamenti' ? 'active' : ''} onClick={() => setVista('appartamenti')}>
             Appartamenti ({appartamenti.length})
           </button>
-
-          <button
-            className={vista === 'prenotazioni' ? 'active' : ''}
-            onClick={() => setVista('prenotazioni')}
-          >
+          <button className={vista === 'prenotazioni' ? 'active' : ''} onClick={() => setVista('prenotazioni')}>
             Prenotazioni ({prenotazioni.length})
           </button>
-
-          <button
-            className={vista === 'nuova' ? 'active' : ''}
-            onClick={() => setVista('nuova')}
-          >
+          <button className={vista === 'nuova' ? 'active' : ''} onClick={() => setVista('nuova')}>
             + Nuova Prenotazione
           </button>
-
-          <button
-            className={vista === 'nuovo_app' ? 'active' : ''}
-            onClick={() => setVista('nuovo_app')}
-          >
+          <button className={vista === 'nuovo_app' ? 'active' : ''} onClick={() => setVista('nuovo_app')}>
             + Nuovo Appartamento
           </button>
         </nav>
@@ -78,31 +59,21 @@ function App() {
         {vista === 'dashboard' && (
           <Dashboard appartamenti={appartamenti} prenotazioni={prenotazioni} />
         )}
-
         {vista === 'appartamenti' && (
           <ListaAppartamenti appartamenti={appartamenti} onUpdate={caricaDati} />
         )}
-
         {vista === 'prenotazioni' && (
           <ListaPrenotazioni prenotazioni={prenotazioni} onUpdate={caricaDati} />
         )}
-
         {vista === 'nuova' && (
           <NuovaPrenotazione
             appartamenti={appartamenti}
-            onSave={() => {
-              caricaDati()
-              setVista('prenotazioni')
-            }}
+            onSave={() => { caricaDati(); setVista('prenotazioni') }}
           />
         )}
-
         {vista === 'nuovo_app' && (
           <NuovoAppartamento
-            onSave={() => {
-              caricaDati()
-              setVista('appartamenti')
-            }}
+            onSave={() => { caricaDati(); setVista('appartamenti') }}
           />
         )}
       </main>
@@ -113,24 +84,16 @@ function App() {
 /* ---------- DASHBOARD ---------- */
 function Dashboard({ appartamenti, prenotazioni }) {
   const oggi = new Date().toISOString().split('T')[0]
-  const prenotazioniOggi = prenotazioni.filter(
-    (p) => p.check_in <= oggi && p.check_out >= oggi
-  )
-  const checkInOggi = prenotazioni.filter((p) => p.check_in === oggi)
-  const checkOutOggi = prenotazioni.filter((p) => p.check_out === oggi)
+  const prenotazioniOggi = prenotazioni.filter(p => p.check_in <= oggi && p.check_out >= oggi)
+  const checkInOggi = prenotazioni.filter(p => p.check_in === oggi)
+  const checkOutOggi = prenotazioni.filter(p => p.check_out === oggi)
 
   return (
     <div className="dashboard">
       <h2>
         Dashboard -{' '}
-        {new Date().toLocaleDateString('it-IT', {
-          weekday: 'long',
-          day: 'numeric',
-          month: 'long',
-          year: 'numeric'
-        })}
+        {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
       </h2>
-
       <div className="stats-grid">
         <div className="stat-card">
           <h3>🏠 Appartamenti</h3>
@@ -205,6 +168,26 @@ function ListaAppartamenti({ appartamenti, onUpdate }) {
     }
   }
 
+  const eliminaAppartamento = async (id, nome) => {
+    if (!confirm(`Sei sicuro di voler eliminare "${nome}"?\nL'operazione non è reversibile.`)) return
+    try {
+      const res = await fetch(`${API_URL}/appartamenti/${id}`, { method: 'DELETE' })
+      if (res.ok) {
+        onUpdate()
+      } else {
+        const data = await res.json().catch(() => ({}))
+        alert(data.error || 'Errore durante l\'eliminazione')
+      }
+    } catch (err) {
+      console.error(err)
+      alert('Errore di connessione')
+    }
+  }
+
+  const aggiornaField = (field, value) => {
+    setFormModifica(prev => ({ ...prev, [field]: value }))
+  }
+
   return (
     <div className="lista-appartamenti">
       <h2>Appartamenti</h2>
@@ -237,20 +220,22 @@ function ListaAppartamenti({ appartamenti, onUpdate }) {
               <tr key={a.id}>
                 {modificaId === a.id ? (
                   <>
-                    <td><input value={formModifica.nome} onChange={e => setFormModifica({...formModifica, nome: e.target.value})} /></td>
-                    <td><input value={formModifica.via} onChange={e => setFormModifica({...formModifica, via: e.target.value})} /></td>
-                    <td><input value={formModifica.owner} onChange={e => setFormModifica({...formModifica, owner: e.target.value})} /></td>
-                    <td><input value={formModifica.gestore} onChange={e => setFormModifica({...formModifica, gestore: e.target.value})} /></td>
-                    <td><input type="number" step="0.01" value={formModifica.prezzo} onChange={e => setFormModifica({...formModifica, prezzo: e.target.value})} /></td>
-                    <td><input type="number" step="0.01" value={formModifica.biancheria} onChange={e => setFormModifica({...formModifica, biancheria: e.target.value})} /></td>
-                    <td><input type="number" value={formModifica.logistica} onChange={e => setFormModifica({...formModifica, logistica: e.target.value})} /></td>
-                    <td><input type="number" value={formModifica.pulizia} onChange={e => setFormModifica({...formModifica, pulizia: e.target.value})} /></td>
-                    <td><input type="number" value={formModifica.letti_max} onChange={e => setFormModifica({...formModifica, letti_max: e.target.value})} /></td>
-                    <td>
-                      <button className="btn-save-small" onClick={() => salvaModifica(a.id)} disabled={saving}>
-                        {saving ? '...' : '✓'}
+                    <td><input className="edit-input" value={formModifica.nome} onChange={e => aggiornaField('nome', e.target.value)} /></td>
+                    <td><input className="edit-input" value={formModifica.via} onChange={e => aggiornaField('via', e.target.value)} /></td>
+                    <td><input className="edit-input" value={formModifica.owner} onChange={e => aggiornaField('owner', e.target.value)} /></td>
+                    <td><input className="edit-input" value={formModifica.gestore} onChange={e => aggiornaField('gestore', e.target.value)} /></td>
+                    <td><input className="edit-input" type="number" step="0.01" value={formModifica.prezzo} onChange={e => aggiornaField('prezzo', e.target.value)} /></td>
+                    <td><input className="edit-input" type="number" step="0.01" value={formModifica.biancheria} onChange={e => aggiornaField('biancheria', e.target.value)} /></td>
+                    <td><input className="edit-input" type="number" value={formModifica.logistica} onChange={e => aggiornaField('logistica', e.target.value)} /></td>
+                    <td><input className="edit-input" type="number" value={formModifica.pulizia} onChange={e => aggiornaField('pulizia', e.target.value)} /></td>
+                    <td><input className="edit-input" type="number" value={formModifica.letti_max} onChange={e => aggiornaField('letti_max', e.target.value)} /></td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <button className="btn-icon btn-confirm" title="Salva" onClick={() => salvaModifica(a.id)} disabled={saving}>
+                        {saving ? '…' : '✓'}
                       </button>
-                      <button className="btn-cancel" onClick={() => setModificaId(null)}>✕</button>
+                      <button className="btn-icon btn-cancel-icon" title="Annulla" onClick={() => setModificaId(null)}>
+                        ✕
+                      </button>
                     </td>
                   </>
                 ) : (
@@ -264,8 +249,13 @@ function ListaAppartamenti({ appartamenti, onUpdate }) {
                     <td>{a.logistica != null ? `${Number(a.logistica)} min` : '-'}</td>
                     <td>{a.pulizia != null ? `${Number(a.pulizia)} min` : '-'}</td>
                     <td>{a.letti_max || '-'}</td>
-                    <td>
-                      <button className="btn-delete" onClick={() => apriModifica(a)}>Modifica</button>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <button className="btn-icon btn-edit" title="Modifica" onClick={() => apriModifica(a)}>
+                        ✏️
+                      </button>
+                      <button className="btn-icon btn-trash" title="Elimina" onClick={() => eliminaAppartamento(a.id, a.nome)}>
+                        🗑️
+                      </button>
                     </td>
                   </>
                 )}
@@ -293,7 +283,6 @@ function ListaPrenotazioni({ prenotazioni, onUpdate }) {
   return (
     <div className="lista-prenotazioni">
       <h2>Prenotazioni</h2>
-
       {prenotazioni.length === 0 ? (
         <p className="empty-message">Nessuna prenotazione presente</p>
       ) : (
@@ -318,14 +307,9 @@ function ListaPrenotazioni({ prenotazioni, onUpdate }) {
                   <td>{new Date(p.check_in).toLocaleDateString('it-IT')}</td>
                   <td>{new Date(p.check_out).toLocaleDateString('it-IT')}</td>
                   <td>{p.num_ospiti}</td>
+                  <td><span className={`stato-badge ${p.stato}`}>{p.stato}</span></td>
                   <td>
-                    <span className={`stato-badge ${p.stato}`}>{p.stato}</span>
-                  </td>
-                  <td>
-                    <button
-                      className="btn-delete"
-                      onClick={() => eliminaPrenotazione(p.id)}
-                    >
+                    <button className="btn-icon btn-trash" title="Elimina" onClick={() => eliminaPrenotazione(p.id)}>
                       🗑️
                     </button>
                   </td>
@@ -381,73 +365,35 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <label>Appartamento *</label>
-          <select
-            required
-            value={form.appartamento_id}
-            onChange={(e) => setForm({ ...form, appartamento_id: e.target.value })}
-          >
+          <select required value={form.appartamento_id} onChange={(e) => setForm({ ...form, appartamento_id: e.target.value })}>
             <option value="">Seleziona appartamento...</option>
             {appartamenti.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.nome} - {a.via}
-              </option>
+              <option key={a.id} value={a.id}>{a.nome} - {a.via}</option>
             ))}
           </select>
         </div>
-
         <div className="form-group">
           <label>Nome Ospite *</label>
-          <input
-            type="text"
-            required
-            value={form.guest_name}
-            onChange={(e) => setForm({ ...form, guest_name: e.target.value })}
-            placeholder="Nome e cognome"
-          />
+          <input type="text" required value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value })} placeholder="Nome e cognome" />
         </div>
-
         <div className="form-row">
           <div className="form-group">
             <label>Check-in *</label>
-            <input
-              type="date"
-              required
-              value={form.check_in}
-              onChange={(e) => setForm({ ...form, check_in: e.target.value })}
-            />
+            <input type="date" required value={form.check_in} onChange={(e) => setForm({ ...form, check_in: e.target.value })} />
           </div>
           <div className="form-group">
             <label>Check-out *</label>
-            <input
-              type="date"
-              required
-              value={form.check_out}
-              onChange={(e) => setForm({ ...form, check_out: e.target.value })}
-            />
+            <input type="date" required value={form.check_out} onChange={(e) => setForm({ ...form, check_out: e.target.value })} />
           </div>
         </div>
-
         <div className="form-group">
           <label>Numero Ospiti</label>
-          <input
-            type="number"
-            min="1"
-            value={form.num_ospiti}
-            onChange={(e) =>
-              setForm({ ...form, num_ospiti: parseInt(e.target.value) })
-            }
-          />
+          <input type="number" min="1" value={form.num_ospiti} onChange={(e) => setForm({ ...form, num_ospiti: parseInt(e.target.value) })} />
         </div>
-
         <div className="form-group">
           <label>Note</label>
-          <textarea
-            value={form.note}
-            onChange={(e) => setForm({ ...form, note: e.target.value })}
-            placeholder="Note aggiuntive..."
-          />
+          <textarea value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="Note aggiuntive..." />
         </div>
-
         <button type="submit" className="btn-save" disabled={saving}>
           {saving ? 'Salvataggio...' : 'Salva Prenotazione'}
         </button>
@@ -459,15 +405,8 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
 /* ---------- NUOVO APPARTAMENTO ---------- */
 function NuovoAppartamento({ onSave }) {
   const [form, setForm] = useState({
-    owner: '',
-    gestore: '',
-    via: '',
-    nome: '',
-    prezzo: '',
-    biancheria: '',
-    logistica: '',
-    pulizia: '',
-    letti_max: ''
+    owner: '', gestore: '', via: '', nome: '',
+    prezzo: '', biancheria: '', logistica: '', pulizia: '', letti_max: ''
   })
   const [saving, setSaving] = useState(false)
   const [errore, setErrore] = useState('')
