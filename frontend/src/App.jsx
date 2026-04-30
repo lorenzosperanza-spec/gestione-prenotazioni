@@ -6,21 +6,22 @@ const API_URL = 'https://gestione-prenotazioni-production.up.railway.app/api';
 function App() {
   const [appartamenti, setAppartamenti] = useState([])
   const [prenotazioni, setPrenotazioni] = useState([])
+  const [dipendenti, setDipendenti] = useState([])
   const [vista, setVista] = useState('dashboard')
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    caricaDati()
-  }, [])
+  useEffect(() => { caricaDati() }, [])
 
   const caricaDati = async () => {
     try {
-      const [appRes, prenRes] = await Promise.all([
+      const [appRes, prenRes, dipRes] = await Promise.all([
         fetch(`${API_URL}/appartamenti`),
-        fetch(`${API_URL}/prenotazioni`)
+        fetch(`${API_URL}/prenotazioni`),
+        fetch(`${API_URL}/dipendenti`)
       ])
       setAppartamenti(await appRes.json())
       setPrenotazioni(await prenRes.json())
+      setDipendenti(await dipRes.json())
     } catch (err) {
       console.error('Errore caricamento dati:', err)
     } finally {
@@ -28,9 +29,7 @@ function App() {
     }
   }
 
-  if (loading) {
-    return <div className="loading">Caricamento...</div>
-  }
+  if (loading) return <div className="loading">Caricamento...</div>
 
   return (
     <div className="app">
@@ -46,6 +45,9 @@ function App() {
           <button className={vista === 'prenotazioni' ? 'active' : ''} onClick={() => setVista('prenotazioni')}>
             Prenotazioni ({prenotazioni.length})
           </button>
+          <button className={vista === 'dipendenti' ? 'active' : ''} onClick={() => setVista('dipendenti')}>
+            Dipendenti ({dipendenti.length})
+          </button>
           <button className={vista === 'nuova' ? 'active' : ''} onClick={() => setVista('nuova')}>
             + Nuova Prenotazione
           </button>
@@ -57,13 +59,16 @@ function App() {
 
       <main className="main">
         {vista === 'dashboard' && (
-          <Dashboard prenotazioni={prenotazioni} />
+          <Dashboard prenotazioni={prenotazioni} dipendenti={dipendenti} />
         )}
         {vista === 'appartamenti' && (
           <ListaAppartamenti appartamenti={appartamenti} onUpdate={caricaDati} />
         )}
         {vista === 'prenotazioni' && (
           <ListaPrenotazioni prenotazioni={prenotazioni} appartamenti={appartamenti} onUpdate={caricaDati} />
+        )}
+        {vista === 'dipendenti' && (
+          <ListaDipendenti dipendenti={dipendenti} onUpdate={caricaDati} />
         )}
         {vista === 'nuova' && (
           <NuovaPrenotazione
@@ -82,16 +87,15 @@ function App() {
 }
 
 /* ---------- DASHBOARD ---------- */
-function Dashboard({ prenotazioni }) {
+function Dashboard({ prenotazioni, dipendenti }) {
   const [orizzonte, setOrizzonte] = useState(14)
+  const [assegnazioni, setAssegnazioni] = useState({}) // { prenotazione_id: dipendente_id }
 
   const oggi = new Date()
   oggi.setHours(0, 0, 0, 0)
-
   const fineOrizzonte = new Date(oggi)
   fineOrizzonte.setDate(oggi.getDate() + orizzonte)
 
-  // Per ogni check-out, trova la prenotazione successiva sullo stesso appartamento
   const prossimaPren = (appartamento_id, checkOutDate) => {
     const future = prenotazioni
       .filter(p => p.appartamento_id === appartamento_id && new Date(p.check_in) > checkOutDate)
@@ -99,21 +103,13 @@ function Dashboard({ prenotazioni }) {
     return future[0] || null
   }
 
-  // Pulizie oggi: check-out oggi
   const pulizieOggi = prenotazioni
-    .filter(p => {
-      const co = new Date(p.check_out); co.setHours(0,0,0,0)
-      return co.getTime() === oggi.getTime()
-    })
+    .filter(p => { const co = new Date(p.check_out); co.setHours(0,0,0,0); return co.getTime() === oggi.getTime() })
     .map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, new Date(p.check_out)) }))
 
-  // Pulizie future: check-out da domani a fine orizzonte
   const domani = new Date(oggi); domani.setDate(oggi.getDate() + 1)
   const pulizieFuture = prenotazioni
-    .filter(p => {
-      const co = new Date(p.check_out); co.setHours(0,0,0,0)
-      return co >= domani && co <= fineOrizzonte
-    })
+    .filter(p => { const co = new Date(p.check_out); co.setHours(0,0,0,0); return co >= domani && co <= fineOrizzonte })
     .sort((a, b) => new Date(a.check_out) - new Date(b.check_out))
     .map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, new Date(p.check_out)) }))
 
@@ -125,16 +121,37 @@ function Dashboard({ prenotazioni }) {
   const fmtData = (dateStr) =>
     new Date(dateStr).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' })
 
+  const setAssegnazione = (prenId, dipId) => {
+    setAssegnazioni(prev => ({ ...prev, [prenId]: dipId }))
+  }
+
   const PuliziaCard = ({ p, evidenzia }) => {
     const gg = giorniA(p.check_out)
     const label = gg === 0 ? 'oggi' : gg === 1 ? 'domani' : `tra ${gg} giorni`
+    const dipAssegnato = assegnazioni[p.id] || ''
+
     return (
       <div className={`pulizia-card ${evidenzia ? 'pulizia-oggi' : ''}`}>
         <div className="pulizia-header">
           <span className="pulizia-nome">{p.appartamento_nome}</span>
-          <span className={`pulizia-quando ${gg === 0 ? 'tag-oggi' : gg === 1 ? 'tag-domani' : 'tag-futuro'}`}>
-            🧹 {label}
-          </span>
+          <div className="pulizia-header-right">
+            <select
+              className="assegna-select"
+              value={dipAssegnato}
+              onChange={e => setAssegnazione(p.id, e.target.value)}
+              title="Assegna dipendente"
+            >
+              <option value="">👤 Assegna...</option>
+              {dipendenti.map(d => (
+                <option key={d.id} value={d.id}>
+                  {d.nome_cognome}{d.patente ? ' 🚗' : ''}
+                </option>
+              ))}
+            </select>
+            <span className={`pulizia-quando ${gg === 0 ? 'tag-oggi' : gg === 1 ? 'tag-domani' : 'tag-futuro'}`}>
+              🧹 {label}
+            </span>
+          </div>
         </div>
         <div className="pulizia-body">
           <div className="pulizia-info">
@@ -171,25 +188,184 @@ function Dashboard({ prenotazioni }) {
         </div>
       </div>
 
-      {/* OGGI */}
       <section className="dash-section">
         <h3 className="dash-section-title">🧹 Pulizie oggi ({pulizieOggi.length})</h3>
-        {pulizieOggi.length === 0 ? (
-          <p className="dash-empty">Nessuna pulizia prevista per oggi</p>
-        ) : (
-          pulizieOggi.map(p => <PuliziaCard key={p.id} p={p} evidenzia />)
-        )}
+        {pulizieOggi.length === 0
+          ? <p className="dash-empty">Nessuna pulizia prevista per oggi</p>
+          : pulizieOggi.map(p => <PuliziaCard key={p.id} p={p} evidenzia />)
+        }
       </section>
 
-      {/* PROSSIME */}
       <section className="dash-section">
-        <h3 className="dash-section-title">📅 Prossime pulizie — {orizzonte === 14 ? '2 settimane' : '1 mese'} ({pulizieFuture.length})</h3>
-        {pulizieFuture.length === 0 ? (
-          <p className="dash-empty">Nessuna pulizia nei prossimi {orizzonte} giorni</p>
-        ) : (
-          pulizieFuture.map(p => <PuliziaCard key={p.id} p={p} evidenzia={false} />)
-        )}
+        <h3 className="dash-section-title">
+          📅 Prossime pulizie — {orizzonte === 14 ? '2 settimane' : '1 mese'} ({pulizieFuture.length})
+        </h3>
+        {pulizieFuture.length === 0
+          ? <p className="dash-empty">Nessuna pulizia nei prossimi {orizzonte} giorni</p>
+          : pulizieFuture.map(p => <PuliziaCard key={p.id} p={p} evidenzia={false} />)
+        }
       </section>
+    </div>
+  )
+}
+
+/* ---------- LISTA DIPENDENTI ---------- */
+function ListaDipendenti({ dipendenti, onUpdate }) {
+  const [modificaId, setModificaId] = useState(null)
+  const [formModifica, setFormModifica] = useState({})
+  const [saving, setSaving] = useState(false)
+  const [showNuovo, setShowNuovo] = useState(false)
+  const [formNuovo, setFormNuovo] = useState({ nome_cognome: '', ore_settimanali: '', patente: false })
+  const [errore, setErrore] = useState('')
+
+  const apriModifica = (d) => {
+    setModificaId(d.id)
+    setFormModifica({ nome_cognome: d.nome_cognome, ore_settimanali: d.ore_settimanali, patente: d.patente })
+  }
+
+  const salvaModifica = async (id) => {
+    if (saving) return
+    setSaving(true)
+    try {
+      const res = await fetch(`${API_URL}/dipendenti/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formModifica)
+      })
+      if (res.ok) { setModificaId(null); onUpdate() }
+      else { const d = await res.json().catch(() => ({})); alert(d.error || 'Errore salvataggio') }
+    } catch { alert('Errore di connessione') }
+    finally { setSaving(false) }
+  }
+
+  const elimina = async (id, nome) => {
+    if (!confirm(`Eliminare "${nome}"?`)) return
+    try {
+      const res = await fetch(`${API_URL}/dipendenti/${id}`, { method: 'DELETE' })
+      if (res.ok) onUpdate()
+      else { const d = await res.json().catch(() => ({})); alert(d.error || 'Errore eliminazione') }
+    } catch { alert('Errore di connessione') }
+  }
+
+  const salvanuovo = async () => {
+    if (saving) return
+    if (!formNuovo.nome_cognome.trim()) { setErrore('Il nome è obbligatorio'); return }
+    setErrore('')
+    setSaving(true)
+    try {
+      const res = await fetch(`${API_URL}/dipendenti`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formNuovo)
+      })
+      if (res.ok) {
+        setShowNuovo(false)
+        setFormNuovo({ nome_cognome: '', ore_settimanali: '', patente: false })
+        onUpdate()
+      } else { const d = await res.json().catch(() => ({})); setErrore(d.error || 'Errore') }
+    } catch { setErrore('Errore di connessione') }
+    finally { setSaving(false) }
+  }
+
+  const upd = (field, value) => setFormModifica(prev => ({ ...prev, [field]: value }))
+
+  return (
+    <div className="lista-dipendenti">
+      <div className="section-header">
+        <h2>Dipendenti</h2>
+        <button className="btn-add" onClick={() => { setShowNuovo(!showNuovo); setErrore('') }}>
+          {showNuovo ? '✕ Annulla' : '+ Nuovo Dipendente'}
+        </button>
+      </div>
+
+      {showNuovo && (
+        <div className="nuovo-dipendente-form">
+          {errore && <div className="error-message">{errore}</div>}
+          <div className="form-row-3">
+            <div className="form-group">
+              <label>NOME COGNOME *</label>
+              <input
+                type="text"
+                value={formNuovo.nome_cognome}
+                onChange={e => setFormNuovo({ ...formNuovo, nome_cognome: e.target.value })}
+                placeholder="Es. Mario Rossi"
+              />
+            </div>
+            <div className="form-group">
+              <label>ORE CONTRATTUALI/SETTIMANA</label>
+              <input
+                type="number"
+                min="1" max="50"
+                value={formNuovo.ore_settimanali}
+                onChange={e => setFormNuovo({ ...formNuovo, ore_settimanali: e.target.value })}
+                placeholder="Es. 40"
+              />
+            </div>
+            <div className="form-group patente-group">
+              <label>PATENTE</label>
+              <div className="toggle-patente">
+                <input
+                  type="checkbox"
+                  id="patente-nuovo"
+                  checked={formNuovo.patente}
+                  onChange={e => setFormNuovo({ ...formNuovo, patente: e.target.checked })}
+                />
+                <label htmlFor="patente-nuovo" className="toggle-label">
+                  {formNuovo.patente ? '✅ Sì' : '❌ No'}
+                </label>
+              </div>
+            </div>
+          </div>
+          <button className="btn-save-inline" onClick={salvanuovo} disabled={saving}>
+            {saving ? 'Salvataggio...' : 'Salva Dipendente'}
+          </button>
+        </div>
+      )}
+
+      <div className="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Nome Cognome</th>
+              <th>Ore/Settimana</th>
+              <th>Patente</th>
+              <th>Azioni</th>
+            </tr>
+          </thead>
+          <tbody>
+            {dipendenti.map(d => (
+              <tr key={d.id}>
+                {modificaId === d.id ? (
+                  <>
+                    <td><input className="edit-input" value={formModifica.nome_cognome} onChange={e => upd('nome_cognome', e.target.value)} /></td>
+                    <td><input className="edit-input" type="number" value={formModifica.ore_settimanali} onChange={e => upd('ore_settimanali', e.target.value)} /></td>
+                    <td>
+                      <select className="edit-input" value={formModifica.patente ? 'si' : 'no'} onChange={e => upd('patente', e.target.value === 'si')}>
+                        <option value="si">✅ Sì</option>
+                        <option value="no">❌ No</option>
+                      </select>
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <button className="btn-icon btn-confirm" onClick={() => salvaModifica(d.id)} disabled={saving}>{saving ? '…' : '✓'}</button>
+                      <button className="btn-icon btn-cancel-icon" onClick={() => setModificaId(null)}>✕</button>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td><strong>{d.nome_cognome}</strong></td>
+                    <td>{d.ore_settimanali ? `${d.ore_settimanali}h` : '-'}</td>
+                    <td>{d.patente ? '✅ Sì' : '❌ No'}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <button className="btn-icon btn-edit" title="Modifica" onClick={() => apriModifica(d)}>✏️</button>
+                      <button className="btn-icon btn-trash" title="Elimina" onClick={() => elimina(d.id, d.nome_cognome)}>🗑️</button>
+                    </td>
+                  </>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -210,15 +386,9 @@ function ListaAppartamenti({ appartamenti, onUpdate }) {
   const apriModifica = (a) => {
     setModificaId(a.id)
     setFormModifica({
-      owner: a.owner || '',
-      gestore: a.gestore || '',
-      via: a.via || '',
-      nome: a.nome || '',
-      prezzo: a.prezzo || '',
-      biancheria: a.biancheria || '',
-      logistica: a.logistica || '',
-      pulizia: a.pulizia || '',
-      letti_max: a.letti_max || ''
+      owner: a.owner || '', gestore: a.gestore || '', via: a.via || '', nome: a.nome || '',
+      prezzo: a.prezzo || '', biancheria: a.biancheria || '', logistica: a.logistica || '',
+      pulizia: a.pulizia || '', letti_max: a.letti_max || ''
     })
   }
 
@@ -231,66 +401,35 @@ function ListaAppartamenti({ appartamenti, onUpdate }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formModifica)
       })
-      if (res.ok) {
-        setModificaId(null)
-        onUpdate()
-      } else {
-        const data = await res.json().catch(() => ({}))
-        alert(data.error || 'Errore nel salvataggio')
-      }
-    } catch (err) {
-      console.error(err)
-      alert('Errore di connessione')
-    } finally {
-      setSaving(false)
-    }
+      if (res.ok) { setModificaId(null); onUpdate() }
+      else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore nel salvataggio') }
+    } catch { alert('Errore di connessione') }
+    finally { setSaving(false) }
   }
 
   const eliminaAppartamento = async (id, nome) => {
-    if (!confirm(`Sei sicuro di voler eliminare "${nome}"?\nL'operazione non è reversibile.`)) return
+    if (!confirm(`Eliminare "${nome}"? L'operazione non è reversibile.`)) return
     try {
       const res = await fetch(`${API_URL}/appartamenti/${id}`, { method: 'DELETE' })
-      if (res.ok) {
-        onUpdate()
-      } else {
-        const data = await res.json().catch(() => ({}))
-        alert(data.error || 'Errore durante l\'eliminazione')
-      }
-    } catch (err) {
-      console.error(err)
-      alert('Errore di connessione')
-    }
+      if (res.ok) onUpdate()
+      else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore eliminazione') }
+    } catch { alert('Errore di connessione') }
   }
 
-  const aggiornaField = (field, value) => {
-    setFormModifica(prev => ({ ...prev, [field]: value }))
-  }
+  const aggiornaField = (field, value) => setFormModifica(prev => ({ ...prev, [field]: value }))
 
   return (
     <div className="lista-appartamenti">
       <h2>Appartamenti</h2>
-      <input
-        type="text"
-        placeholder="Cerca per nome, via, owner o gestore..."
-        value={filtro}
-        onChange={(e) => setFiltro(e.target.value)}
-        className="search-input"
-      />
-
+      <input type="text" placeholder="Cerca per nome, via, owner o gestore..." value={filtro}
+        onChange={(e) => setFiltro(e.target.value)} className="search-input" />
       <div className="table-container">
         <table>
           <thead>
             <tr>
-              <th>Appartamento</th>
-              <th>Via</th>
-              <th>Owner</th>
-              <th>Gestore</th>
-              <th>Prezzo (€)</th>
-              <th>Biancheria (€)</th>
-              <th>Logistica (min)</th>
-              <th>Pulizia (min)</th>
-              <th>Letti Max</th>
-              <th>Azioni</th>
+              <th>Appartamento</th><th>Via</th><th>Owner</th><th>Gestore</th>
+              <th>Prezzo (€)</th><th>Biancheria (€)</th><th>Logistica (min)</th>
+              <th>Pulizia (min)</th><th>Letti Max</th><th>Azioni</th>
             </tr>
           </thead>
           <tbody>
@@ -308,32 +447,22 @@ function ListaAppartamenti({ appartamenti, onUpdate }) {
                     <td><input className="edit-input" type="number" value={formModifica.pulizia} onChange={e => aggiornaField('pulizia', e.target.value)} /></td>
                     <td><input className="edit-input" type="number" value={formModifica.letti_max} onChange={e => aggiornaField('letti_max', e.target.value)} /></td>
                     <td style={{ whiteSpace: 'nowrap' }}>
-                      <button className="btn-icon btn-confirm" title="Salva" onClick={() => salvaModifica(a.id)} disabled={saving}>
-                        {saving ? '…' : '✓'}
-                      </button>
-                      <button className="btn-icon btn-cancel-icon" title="Annulla" onClick={() => setModificaId(null)}>
-                        ✕
-                      </button>
+                      <button className="btn-icon btn-confirm" onClick={() => salvaModifica(a.id)} disabled={saving}>{saving ? '…' : '✓'}</button>
+                      <button className="btn-icon btn-cancel-icon" onClick={() => setModificaId(null)}>✕</button>
                     </td>
                   </>
                 ) : (
                   <>
                     <td><strong>{a.nome}</strong></td>
-                    <td>{a.via || '-'}</td>
-                    <td>{a.owner || '-'}</td>
-                    <td>{a.gestore || '-'}</td>
+                    <td>{a.via || '-'}</td><td>{a.owner || '-'}</td><td>{a.gestore || '-'}</td>
                     <td>{a.prezzo != null ? `€${Number(a.prezzo).toFixed(2)}` : '-'}</td>
                     <td>{a.biancheria != null ? `€${Number(a.biancheria).toFixed(2)}` : '-'}</td>
                     <td>{a.logistica != null ? `${Number(a.logistica)} min` : '-'}</td>
                     <td>{a.pulizia != null ? `${Number(a.pulizia)} min` : '-'}</td>
                     <td>{a.letti_max || '-'}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
-                      <button className="btn-icon btn-edit" title="Modifica" onClick={() => apriModifica(a)}>
-                        ✏️
-                      </button>
-                      <button className="btn-icon btn-trash" title="Elimina" onClick={() => eliminaAppartamento(a.id, a.nome)}>
-                        🗑️
-                      </button>
+                      <button className="btn-icon btn-edit" title="Modifica" onClick={() => apriModifica(a)}>✏️</button>
+                      <button className="btn-icon btn-trash" title="Elimina" onClick={() => eliminaAppartamento(a.id, a.nome)}>🗑️</button>
                     </td>
                   </>
                 )}
@@ -373,29 +502,18 @@ function ListaPrenotazioni({ prenotazioni, appartamenti, onUpdate }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formModifica)
       })
-      if (res.ok) {
-        setModificaId(null)
-        onUpdate()
-      } else {
-        const data = await res.json().catch(() => ({}))
-        alert(data.error || 'Errore nel salvataggio')
-      }
-    } catch (err) {
-      console.error(err)
-      alert('Errore di connessione')
-    } finally {
-      setSaving(false)
-    }
+      if (res.ok) { setModificaId(null); onUpdate() }
+      else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore nel salvataggio') }
+    } catch { alert('Errore di connessione') }
+    finally { setSaving(false) }
   }
 
   const eliminaPrenotazione = async (id) => {
-    if (!confirm('Sei sicuro di voler eliminare questa prenotazione?')) return
+    if (!confirm('Eliminare questa prenotazione?')) return
     try {
       await fetch(`${API_URL}/prenotazioni/${id}`, { method: 'DELETE' })
       onUpdate()
-    } catch (err) {
-      console.error('Errore eliminazione:', err)
-    }
+    } catch { console.error('Errore eliminazione') }
   }
 
   const upd = (field, value) => setFormModifica(prev => ({ ...prev, [field]: value }))
@@ -410,13 +528,8 @@ function ListaPrenotazioni({ prenotazioni, appartamenti, onUpdate }) {
           <table>
             <thead>
               <tr>
-                <th>Appartamento</th>
-                <th>Check-in</th>
-                <th>Check-out</th>
-                <th>Ospiti</th>
-                <th>Note</th>
-                <th>Stato</th>
-                <th>Azioni</th>
+                <th>Appartamento</th><th>Check-in</th><th>Check-out</th>
+                <th>Ospiti</th><th>Note</th><th>Stato</th><th>Azioni</th>
               </tr>
             </thead>
             <tbody>
@@ -426,9 +539,7 @@ function ListaPrenotazioni({ prenotazioni, appartamenti, onUpdate }) {
                     <>
                       <td>
                         <select className="edit-input" value={formModifica.appartamento_id} onChange={e => upd('appartamento_id', e.target.value)}>
-                          {appartamenti.map(a => (
-                            <option key={a.id} value={a.id}>{a.nome}</option>
-                          ))}
+                          {appartamenti.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
                         </select>
                       </td>
                       <td><input className="edit-input" type="date" value={formModifica.check_in} onChange={e => upd('check_in', e.target.value)} /></td>
@@ -443,12 +554,8 @@ function ListaPrenotazioni({ prenotazioni, appartamenti, onUpdate }) {
                         </select>
                       </td>
                       <td style={{ whiteSpace: 'nowrap' }}>
-                        <button className="btn-icon btn-confirm" title="Salva" onClick={() => salvaModifica(p.id)} disabled={saving}>
-                          {saving ? '…' : '✓'}
-                        </button>
-                        <button className="btn-icon btn-cancel-icon" title="Annulla" onClick={() => setModificaId(null)}>
-                          ✕
-                        </button>
+                        <button className="btn-icon btn-confirm" onClick={() => salvaModifica(p.id)} disabled={saving}>{saving ? '…' : '✓'}</button>
+                        <button className="btn-icon btn-cancel-icon" onClick={() => setModificaId(null)}>✕</button>
                       </td>
                     </>
                   ) : (
@@ -477,13 +584,7 @@ function ListaPrenotazioni({ prenotazioni, appartamenti, onUpdate }) {
 
 /* ---------- NUOVA PRENOTAZIONE ---------- */
 function NuovaPrenotazione({ appartamenti, onSave }) {
-  const [form, setForm] = useState({
-    appartamento_id: '',
-    check_in: '',
-    check_out: '',
-    num_ospiti: 1,
-    note: ''
-  })
+  const [form, setForm] = useState({ appartamento_id: '', check_in: '', check_out: '', num_ospiti: 1, note: '' })
   const [saving, setSaving] = useState(false)
 
   const handleSubmit = async (e) => {
@@ -496,18 +597,9 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form)
       })
-      if (res.ok) {
-        onSave()
-      } else {
-        const data = await res.json().catch(() => ({}))
-        alert(data.error || 'Errore nel salvataggio')
-        setSaving(false)
-      }
-    } catch (err) {
-      console.error('Errore:', err)
-      alert('Errore di connessione')
-      setSaving(false)
-    }
+      if (res.ok) { onSave() }
+      else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore nel salvataggio'); setSaving(false) }
+    } catch { alert('Errore di connessione'); setSaving(false) }
   }
 
   return (
@@ -518,12 +610,9 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
           <label>Appartamento *</label>
           <select required value={form.appartamento_id} onChange={(e) => setForm({ ...form, appartamento_id: e.target.value })}>
             <option value="">Seleziona appartamento...</option>
-            {appartamenti.map((a) => (
-              <option key={a.id} value={a.id}>{a.nome} - {a.via}</option>
-            ))}
+            {appartamenti.map((a) => <option key={a.id} value={a.id}>{a.nome} - {a.via}</option>)}
           </select>
         </div>
-
         <div className="form-row">
           <div className="form-group">
             <label>Check-in *</label>
@@ -552,10 +641,7 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
 
 /* ---------- NUOVO APPARTAMENTO ---------- */
 function NuovoAppartamento({ onSave }) {
-  const [form, setForm] = useState({
-    owner: '', gestore: '', via: '', nome: '',
-    prezzo: '', biancheria: '', logistica: '', pulizia: '', letti_max: ''
-  })
+  const [form, setForm] = useState({ owner: '', gestore: '', via: '', nome: '', prezzo: '', biancheria: '', logistica: '', pulizia: '', letti_max: '' })
   const [saving, setSaving] = useState(false)
   const [errore, setErrore] = useState('')
 
@@ -570,18 +656,9 @@ function NuovoAppartamento({ onSave }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form)
       })
-      if (res.ok) {
-        onSave()
-      } else {
-        const data = await res.json().catch(() => ({}))
-        setErrore(data.error || 'Errore nell\'inserimento dei dati')
-        setSaving(false)
-      }
-    } catch (err) {
-      console.error(err)
-      setErrore('Errore di connessione')
-      setSaving(false)
-    }
+      if (res.ok) { onSave() }
+      else { const data = await res.json().catch(() => ({})); setErrore(data.error || 'Errore'); setSaving(false) }
+    } catch { setErrore('Errore di connessione'); setSaving(false) }
   }
 
   return (
