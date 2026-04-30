@@ -28,6 +28,38 @@ pool.query("SELECT current_database()", (err, result) => {
   console.log("BACKEND STA USANDO IL DB:", result?.rows);
 });
 
+// Crea tabella dipendenti se non esiste e inserisce seed
+const initDipendenti = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dipendenti (
+      id SERIAL PRIMARY KEY,
+      nome_cognome VARCHAR(100) NOT NULL,
+      ore_settimanali INTEGER,
+      patente BOOLEAN DEFAULT false,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  const { rows } = await pool.query('SELECT COUNT(*) FROM dipendenti');
+  if (parseInt(rows[0].count) === 0) {
+    await pool.query(`
+      INSERT INTO dipendenti (nome_cognome, ore_settimanali, patente) VALUES
+        ('Marco Bianchi', 40, true),
+        ('Sara Ferretti', 30, false),
+        ('Luca Moretti', 40, true),
+        ('Giulia Ricci', 25, false),
+        ('Antonio Esposito', 40, true),
+        ('Francesca Romano', 35, false),
+        ('Davide Conti', 40, true),
+        ('Elena Marchetti', 20, false),
+        ('Stefano Lombardi', 40, true),
+        ('Valentina Greco', 30, false)
+    `);
+    console.log('Seed dipendenti inserito');
+  }
+};
+initDipendenti().catch(console.error);
+
+
 
 // ============ ROUTES APPARTAMENTI ============
 
@@ -201,6 +233,64 @@ app.delete('/api/prenotazioni/:id', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore nell\'eliminazione prenotazione' });
+  }
+});
+
+// ============ ROUTES DIPENDENTI ============
+
+// GET tutti i dipendenti
+app.get('/api/dipendenti', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM dipendenti ORDER BY nome_cognome');
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore nel recupero dipendenti' });
+  }
+});
+
+// POST nuovo dipendente
+app.post('/api/dipendenti', async (req, res) => {
+  try {
+    const { nome_cognome, ore_settimanali, patente } = req.body;
+    const result = await pool.query(
+      `INSERT INTO dipendenti (nome_cognome, ore_settimanali, patente) VALUES ($1, $2, $3) RETURNING *`,
+      [nome_cognome, ore_settimanali || null, patente || false]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore nella creazione dipendente' });
+  }
+});
+
+// PUT aggiorna dipendente
+app.put('/api/dipendenti/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nome_cognome, ore_settimanali, patente } = req.body;
+    const result = await pool.query(
+      `UPDATE dipendenti SET nome_cognome=$1, ore_settimanali=$2, patente=$3 WHERE id=$4 RETURNING *`,
+      [nome_cognome, ore_settimanali || null, patente || false, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Dipendente non trovato' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore aggiornamento dipendente' });
+  }
+});
+
+// DELETE dipendente
+app.delete('/api/dipendenti/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query('DELETE FROM dipendenti WHERE id=$1 RETURNING *', [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Dipendente non trovato' });
+    res.json({ message: 'Dipendente eliminato' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore eliminazione dipendente' });
   }
 });
 
