@@ -57,7 +57,7 @@ function App() {
 
       <main className="main">
         {vista === 'dashboard' && (
-          <Dashboard appartamenti={appartamenti} prenotazioni={prenotazioni} />
+          <Dashboard prenotazioni={prenotazioni} />
         )}
         {vista === 'appartamenti' && (
           <ListaAppartamenti appartamenti={appartamenti} onUpdate={caricaDati} />
@@ -82,36 +82,114 @@ function App() {
 }
 
 /* ---------- DASHBOARD ---------- */
-function Dashboard({ appartamenti, prenotazioni }) {
-  const oggi = new Date().toISOString().split('T')[0]
-  const prenotazioniOggi = prenotazioni.filter(p => p.check_in <= oggi && p.check_out >= oggi)
-  const checkInOggi = prenotazioni.filter(p => p.check_in === oggi)
-  const checkOutOggi = prenotazioni.filter(p => p.check_out === oggi)
+function Dashboard({ prenotazioni }) {
+  const [orizzonte, setOrizzonte] = useState(14)
+
+  const oggi = new Date()
+  oggi.setHours(0, 0, 0, 0)
+
+  const fineOrizzonte = new Date(oggi)
+  fineOrizzonte.setDate(oggi.getDate() + orizzonte)
+
+  // Per ogni check-out, trova la prenotazione successiva sullo stesso appartamento
+  const prossimaPren = (appartamento_id, checkOutDate) => {
+    const future = prenotazioni
+      .filter(p => p.appartamento_id === appartamento_id && new Date(p.check_in) > checkOutDate)
+      .sort((a, b) => new Date(a.check_in) - new Date(b.check_in))
+    return future[0] || null
+  }
+
+  // Pulizie oggi: check-out oggi
+  const pulizieOggi = prenotazioni
+    .filter(p => {
+      const co = new Date(p.check_out); co.setHours(0,0,0,0)
+      return co.getTime() === oggi.getTime()
+    })
+    .map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, new Date(p.check_out)) }))
+
+  // Pulizie future: check-out da domani a fine orizzonte
+  const domani = new Date(oggi); domani.setDate(oggi.getDate() + 1)
+  const pulizieFuture = prenotazioni
+    .filter(p => {
+      const co = new Date(p.check_out); co.setHours(0,0,0,0)
+      return co >= domani && co <= fineOrizzonte
+    })
+    .sort((a, b) => new Date(a.check_out) - new Date(b.check_out))
+    .map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, new Date(p.check_out)) }))
+
+  const giorniA = (dateStr) => {
+    const d = new Date(dateStr); d.setHours(0,0,0,0)
+    return Math.round((d - oggi) / 86400000)
+  }
+
+  const fmtData = (dateStr) =>
+    new Date(dateStr).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' })
+
+  const PuliziaCard = ({ p, evidenzia }) => {
+    const gg = giorniA(p.check_out)
+    const label = gg === 0 ? 'oggi' : gg === 1 ? 'domani' : `tra ${gg} giorni`
+    return (
+      <div className={`pulizia-card ${evidenzia ? 'pulizia-oggi' : ''}`}>
+        <div className="pulizia-header">
+          <span className="pulizia-nome">{p.appartamento_nome}</span>
+          <span className={`pulizia-quando ${gg === 0 ? 'tag-oggi' : gg === 1 ? 'tag-domani' : 'tag-futuro'}`}>
+            🧹 {label}
+          </span>
+        </div>
+        <div className="pulizia-body">
+          <div className="pulizia-info">
+            <span>🚪 Check-out: <strong>{fmtData(p.check_out)}</strong></span>
+            {p.prossima ? (
+              <>
+                <span>✅ Prossimo check-in: <strong>{fmtData(p.prossima.check_in)}</strong></span>
+                <span>👥 Ospiti in arrivo: <strong>{p.prossima.num_ospiti}</strong></span>
+              </>
+            ) : (
+              <span className="nessuna-pren">— nessuna prenotazione successiva</span>
+            )}
+          </div>
+          {(p.note || (p.prossima && p.prossima.note)) && (
+            <div className="pulizia-note">
+              {p.note && <span>📋 Note check-out: {p.note}</span>}
+              {p.prossima && p.prossima.note && <span>📋 Note check-in: {p.prossima.note}</span>}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="dashboard">
-      <h2>
-        Dashboard -{' '}
-        {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-      </h2>
-      <div className="stats-grid">
-        <div className="stat-card">
-          <h3>🏠 Appartamenti</h3>
-          <p className="stat-number">{appartamenti.length}</p>
-        </div>
-        <div className="stat-card">
-          <h3>📅 Occupati Oggi</h3>
-          <p className="stat-number">{prenotazioniOggi.length}</p>
-        </div>
-        <div className="stat-card green">
-          <h3>✅ Check-in Oggi</h3>
-          <p className="stat-number">{checkInOggi.length}</p>
-        </div>
-        <div className="stat-card orange">
-          <h3>🚪 Check-out Oggi</h3>
-          <p className="stat-number">{checkOutOggi.length}</p>
+      <div className="dash-header">
+        <h2>
+          {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+        </h2>
+        <div className="orizzonte-toggle">
+          <button className={orizzonte === 14 ? 'active' : ''} onClick={() => setOrizzonte(14)}>2 settimane</button>
+          <button className={orizzonte === 30 ? 'active' : ''} onClick={() => setOrizzonte(30)}>1 mese</button>
         </div>
       </div>
+
+      {/* OGGI */}
+      <section className="dash-section">
+        <h3 className="dash-section-title">🧹 Pulizie oggi ({pulizieOggi.length})</h3>
+        {pulizieOggi.length === 0 ? (
+          <p className="dash-empty">Nessuna pulizia prevista per oggi</p>
+        ) : (
+          pulizieOggi.map(p => <PuliziaCard key={p.id} p={p} evidenzia />)
+        )}
+      </section>
+
+      {/* PROSSIME */}
+      <section className="dash-section">
+        <h3 className="dash-section-title">📅 Prossime pulizie — {orizzonte === 14 ? '2 settimane' : '1 mese'} ({pulizieFuture.length})</h3>
+        {pulizieFuture.length === 0 ? (
+          <p className="dash-empty">Nessuna pulizia nei prossimi {orizzonte} giorni</p>
+        ) : (
+          pulizieFuture.map(p => <PuliziaCard key={p.id} p={p} evidenzia={false} />)
+        )}
+      </section>
     </div>
   )
 }
