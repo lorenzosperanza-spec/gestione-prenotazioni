@@ -80,7 +80,7 @@ function App() {
         )}
 
         {vista === 'appartamenti' && (
-          <ListaAppartamenti appartamenti={appartamenti} />
+          <ListaAppartamenti appartamenti={appartamenti} onUpdate={caricaDati} />
         )}
 
         {vista === 'prenotazioni' && (
@@ -154,14 +154,56 @@ function Dashboard({ appartamenti, prenotazioni }) {
 }
 
 /* ---------- LISTA APPARTAMENTI ---------- */
-function ListaAppartamenti({ appartamenti }) {
+function ListaAppartamenti({ appartamenti, onUpdate }) {
   const [filtro, setFiltro] = useState('')
+  const [modificaId, setModificaId] = useState(null)
+  const [formModifica, setFormModifica] = useState({})
+  const [saving, setSaving] = useState(false)
 
   const appartamentiFiltrati = appartamenti.filter((a) =>
     [a.nome, a.via, a.gestore, a.owner]
       .filter(Boolean)
       .some((v) => v.toLowerCase().includes(filtro.toLowerCase()))
   )
+
+  const apriModifica = (a) => {
+    setModificaId(a.id)
+    setFormModifica({
+      owner: a.owner || '',
+      gestore: a.gestore || '',
+      via: a.via || '',
+      nome: a.nome || '',
+      prezzo: a.prezzo || '',
+      biancheria: a.biancheria || '',
+      logistica: a.logistica || '',
+      pulizia: a.pulizia || '',
+      letti_max: a.letti_max || ''
+    })
+  }
+
+  const salvaModifica = async (id) => {
+    if (saving) return
+    setSaving(true)
+    try {
+      const res = await fetch(`${API_URL}/appartamenti/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formModifica)
+      })
+      if (res.ok) {
+        setModificaId(null)
+        onUpdate()
+      } else {
+        const data = await res.json().catch(() => ({}))
+        alert(data.error || 'Errore nel salvataggio')
+      }
+    } catch (err) {
+      console.error(err)
+      alert('Errore di connessione')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div className="lista-appartamenti">
@@ -193,18 +235,40 @@ function ListaAppartamenti({ appartamenti }) {
           <tbody>
             {appartamentiFiltrati.map((a) => (
               <tr key={a.id}>
-                <td><strong>{a.nome}</strong></td>
-                <td>{a.via || '-'}</td>
-                <td>{a.owner || '-'}</td>
-                <td>{a.gestore || '-'}</td>
-                <td>{a.prezzo != null ? `€${Number(a.prezzo).toFixed(2)}` : '-'}</td>
-                <td>{a.biancheria != null ? `€${Number(a.biancheria).toFixed(2)}` : '-'}</td>
-                <td>{a.logistica != null ? `${Number(a.logistica)} min` : '-'}</td>
-                <td>{a.pulizia != null ? `${Number(a.pulizia)} min` : '-'}</td>
-                <td>{a.letti_max || '-'}</td>
-                <td>
-                  <button className="btn-delete">Modifica</button>
-                </td>
+                {modificaId === a.id ? (
+                  <>
+                    <td><input value={formModifica.nome} onChange={e => setFormModifica({...formModifica, nome: e.target.value})} /></td>
+                    <td><input value={formModifica.via} onChange={e => setFormModifica({...formModifica, via: e.target.value})} /></td>
+                    <td><input value={formModifica.owner} onChange={e => setFormModifica({...formModifica, owner: e.target.value})} /></td>
+                    <td><input value={formModifica.gestore} onChange={e => setFormModifica({...formModifica, gestore: e.target.value})} /></td>
+                    <td><input type="number" step="0.01" value={formModifica.prezzo} onChange={e => setFormModifica({...formModifica, prezzo: e.target.value})} /></td>
+                    <td><input type="number" step="0.01" value={formModifica.biancheria} onChange={e => setFormModifica({...formModifica, biancheria: e.target.value})} /></td>
+                    <td><input type="number" value={formModifica.logistica} onChange={e => setFormModifica({...formModifica, logistica: e.target.value})} /></td>
+                    <td><input type="number" value={formModifica.pulizia} onChange={e => setFormModifica({...formModifica, pulizia: e.target.value})} /></td>
+                    <td><input type="number" value={formModifica.letti_max} onChange={e => setFormModifica({...formModifica, letti_max: e.target.value})} /></td>
+                    <td>
+                      <button className="btn-save-small" onClick={() => salvaModifica(a.id)} disabled={saving}>
+                        {saving ? '...' : '✓'}
+                      </button>
+                      <button className="btn-cancel" onClick={() => setModificaId(null)}>✕</button>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td><strong>{a.nome}</strong></td>
+                    <td>{a.via || '-'}</td>
+                    <td>{a.owner || '-'}</td>
+                    <td>{a.gestore || '-'}</td>
+                    <td>{a.prezzo != null ? `€${Number(a.prezzo).toFixed(2)}` : '-'}</td>
+                    <td>{a.biancheria != null ? `€${Number(a.biancheria).toFixed(2)}` : '-'}</td>
+                    <td>{a.logistica != null ? `${Number(a.logistica)} min` : '-'}</td>
+                    <td>{a.pulizia != null ? `${Number(a.pulizia)} min` : '-'}</td>
+                    <td>{a.letti_max || '-'}</td>
+                    <td>
+                      <button className="btn-delete" onClick={() => apriModifica(a)}>Modifica</button>
+                    </td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>
@@ -289,6 +353,7 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (saving) return
     setSaving(true)
     try {
       const res = await fetch(`${API_URL}/prenotazioni`, {
@@ -299,12 +364,13 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
       if (res.ok) {
         onSave()
       } else {
-        alert('Errore nel salvataggio')
+        const data = await res.json().catch(() => ({}))
+        alert(data.error || 'Errore nel salvataggio')
+        setSaving(false)
       }
     } catch (err) {
       console.error('Errore:', err)
       alert('Errore di connessione')
-    } finally {
       setSaving(false)
     }
   }
@@ -404,9 +470,12 @@ function NuovoAppartamento({ onSave }) {
     letti_max: ''
   })
   const [saving, setSaving] = useState(false)
+  const [errore, setErrore] = useState('')
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (saving) return
+    setErrore('')
     setSaving(true)
     try {
       const res = await fetch(`${API_URL}/appartamenti`, {
@@ -415,14 +484,15 @@ function NuovoAppartamento({ onSave }) {
         body: JSON.stringify(form)
       })
       if (res.ok) {
-        alert('Appartamento aggiunto con successo!')
         onSave()
       } else {
-        alert('Errore nell\'inserimento dei dati')
+        const data = await res.json().catch(() => ({}))
+        setErrore(data.error || 'Errore nell\'inserimento dei dati')
+        setSaving(false)
       }
     } catch (err) {
       console.error(err)
-    } finally {
+      setErrore('Errore di connessione')
       setSaving(false)
     }
   }
@@ -430,11 +500,12 @@ function NuovoAppartamento({ onSave }) {
   return (
     <div className="nuovo-appartamento">
       <h2>Nuovo Appartamento</h2>
+      {errore && <div className="error-message">{errore}</div>}
       <form onSubmit={handleSubmit}>
         {['owner','gestore','via','nome','prezzo','biancheria','logistica','pulizia','letti_max'].map(field => (
           <div className="form-group" key={field}>
-            <label>{field.toUpperCase()}</label>
-            <input 
+            <label>{field.toUpperCase()}{field === 'nome' ? ' *' : ''}</label>
+            <input
               type={['prezzo','biancheria','logistica','pulizia','letti_max'].includes(field) ? 'number' : 'text'}
               step="0.01"
               value={form[field]}
