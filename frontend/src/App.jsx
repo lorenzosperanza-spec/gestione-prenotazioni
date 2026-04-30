@@ -63,7 +63,7 @@ function App() {
           <ListaAppartamenti appartamenti={appartamenti} onUpdate={caricaDati} />
         )}
         {vista === 'prenotazioni' && (
-          <ListaPrenotazioni prenotazioni={prenotazioni} onUpdate={caricaDati} />
+          <ListaPrenotazioni prenotazioni={prenotazioni} appartamenti={appartamenti} onUpdate={caricaDati} />
         )}
         {vista === 'nuova' && (
           <NuovaPrenotazione
@@ -269,7 +269,47 @@ function ListaAppartamenti({ appartamenti, onUpdate }) {
 }
 
 /* ---------- LISTA PRENOTAZIONI ---------- */
-function ListaPrenotazioni({ prenotazioni, onUpdate }) {
+function ListaPrenotazioni({ prenotazioni, appartamenti, onUpdate }) {
+  const [modificaId, setModificaId] = useState(null)
+  const [formModifica, setFormModifica] = useState({})
+  const [saving, setSaving] = useState(false)
+
+  const apriModifica = (p) => {
+    setModificaId(p.id)
+    setFormModifica({
+      appartamento_id: p.appartamento_id,
+      check_in: p.check_in,
+      check_out: p.check_out,
+      num_ospiti: p.num_ospiti,
+      note: p.note || '',
+      stato: p.stato
+    })
+  }
+
+  const salvaModifica = async (id) => {
+    if (saving) return
+    setSaving(true)
+    try {
+      const res = await fetch(`${API_URL}/prenotazioni/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formModifica)
+      })
+      if (res.ok) {
+        setModificaId(null)
+        onUpdate()
+      } else {
+        const data = await res.json().catch(() => ({}))
+        alert(data.error || 'Errore nel salvataggio')
+      }
+    } catch (err) {
+      console.error(err)
+      alert('Errore di connessione')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const eliminaPrenotazione = async (id) => {
     if (!confirm('Sei sicuro di voler eliminare questa prenotazione?')) return
     try {
@@ -279,6 +319,8 @@ function ListaPrenotazioni({ prenotazioni, onUpdate }) {
       console.error('Errore eliminazione:', err)
     }
   }
+
+  const upd = (field, value) => setFormModifica(prev => ({ ...prev, [field]: value }))
 
   return (
     <div className="lista-prenotazioni">
@@ -294,6 +336,7 @@ function ListaPrenotazioni({ prenotazioni, onUpdate }) {
                 <th>Check-in</th>
                 <th>Check-out</th>
                 <th>Ospiti</th>
+                <th>Note</th>
                 <th>Stato</th>
                 <th>Azioni</th>
               </tr>
@@ -301,16 +344,49 @@ function ListaPrenotazioni({ prenotazioni, onUpdate }) {
             <tbody>
               {prenotazioni.map((p) => (
                 <tr key={p.id}>
-                  <td><strong>{p.appartamento_nome}</strong></td>
-                  <td>{new Date(p.check_in).toLocaleDateString('it-IT')}</td>
-                  <td>{new Date(p.check_out).toLocaleDateString('it-IT')}</td>
-                  <td>{p.num_ospiti}</td>
-                  <td><span className={`stato-badge ${p.stato}`}>{p.stato}</span></td>
-                  <td>
-                    <button className="btn-icon btn-trash" title="Elimina" onClick={() => eliminaPrenotazione(p.id)}>
-                      🗑️
-                    </button>
-                  </td>
+                  {modificaId === p.id ? (
+                    <>
+                      <td>
+                        <select className="edit-input" value={formModifica.appartamento_id} onChange={e => upd('appartamento_id', e.target.value)}>
+                          {appartamenti.map(a => (
+                            <option key={a.id} value={a.id}>{a.nome}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td><input className="edit-input" type="date" value={formModifica.check_in} onChange={e => upd('check_in', e.target.value)} /></td>
+                      <td><input className="edit-input" type="date" value={formModifica.check_out} onChange={e => upd('check_out', e.target.value)} /></td>
+                      <td><input className="edit-input" type="number" min="1" value={formModifica.num_ospiti} onChange={e => upd('num_ospiti', e.target.value)} /></td>
+                      <td><input className="edit-input" value={formModifica.note} onChange={e => upd('note', e.target.value)} /></td>
+                      <td>
+                        <select className="edit-input" value={formModifica.stato} onChange={e => upd('stato', e.target.value)}>
+                          <option value="confermata">confermata</option>
+                          <option value="in_attesa">in_attesa</option>
+                          <option value="cancellata">cancellata</option>
+                        </select>
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button className="btn-icon btn-confirm" title="Salva" onClick={() => salvaModifica(p.id)} disabled={saving}>
+                          {saving ? '…' : '✓'}
+                        </button>
+                        <button className="btn-icon btn-cancel-icon" title="Annulla" onClick={() => setModificaId(null)}>
+                          ✕
+                        </button>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td><strong>{p.appartamento_nome}</strong></td>
+                      <td>{new Date(p.check_in).toLocaleDateString('it-IT')}</td>
+                      <td>{new Date(p.check_out).toLocaleDateString('it-IT')}</td>
+                      <td>{p.num_ospiti}</td>
+                      <td>{p.note || '-'}</td>
+                      <td><span className={`stato-badge ${p.stato}`}>{p.stato}</span></td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button className="btn-icon btn-edit" title="Modifica" onClick={() => apriModifica(p)}>✏️</button>
+                        <button className="btn-icon btn-trash" title="Elimina" onClick={() => eliminaPrenotazione(p.id)}>🗑️</button>
+                      </td>
+                    </>
+                  )}
                 </tr>
               ))}
             </tbody>
