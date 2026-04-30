@@ -550,3 +550,104 @@ tbody tr:hover {
   font-style: italic;
   padding: 20px 0;
 }
+
+/* ============================================
+   DIPENDENTI
+   ============================================ */
+.lista-dipendenti {
+  max-width: 800px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.section-header h2 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #2d5a3d;
+  margin: 0;
+}
+
+.btn-add {
+  padding: 8px 18px;
+  background: #2d5a3d;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.btn-add:hover { opacity: 0.88; }
+
+.nuovo-dipendente-form {
+  background: white;
+  border: 1px solid #d4ecd4;
+  border-radius: 10px;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+}
+
+.form-row-3 {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.patente-group label.toggle-label {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 15px;
+  cursor: pointer;
+  font-weight: normal;
+  letter-spacing: 0;
+}
+
+.toggle-patente input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin-right: 8px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.btn-save-inline {
+  padding: 9px 24px;
+  background: #2d5a3d;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.btn-save-inline:hover:not(:disabled) { opacity: 0.88; }
+.btn-save-inline:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Dropdown assegna dipendente nella dashboard */
+.pulizia-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.assegna-select {
+  padding: 5px 10px;
+  border: 1px solid #aacfaa;
+  border-radius: 8px;
+  font-size: 13px;
+  background: white;
+  color: #333;
+  cursor: pointer;
+  min-width: 160px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.assegna-select:focus { border-color: #2d5a3d; }
