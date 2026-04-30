@@ -291,7 +291,6 @@ function ListaPrenotazioni({ prenotazioni, onUpdate }) {
             <thead>
               <tr>
                 <th>Appartamento</th>
-                <th>Ospite</th>
                 <th>Check-in</th>
                 <th>Check-out</th>
                 <th>Ospiti</th>
@@ -303,7 +302,6 @@ function ListaPrenotazioni({ prenotazioni, onUpdate }) {
               {prenotazioni.map((p) => (
                 <tr key={p.id}>
                   <td><strong>{p.appartamento_nome}</strong></td>
-                  <td>{p.guest_name}</td>
                   <td>{new Date(p.check_in).toLocaleDateString('it-IT')}</td>
                   <td>{new Date(p.check_out).toLocaleDateString('it-IT')}</td>
                   <td>{p.num_ospiti}</td>
@@ -327,7 +325,6 @@ function ListaPrenotazioni({ prenotazioni, onUpdate }) {
 function NuovaPrenotazione({ appartamenti, onSave }) {
   const [form, setForm] = useState({
     appartamento_id: '',
-    guest_name: '',
     check_in: '',
     check_out: '',
     num_ospiti: 1,
@@ -372,10 +369,7 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
             ))}
           </select>
         </div>
-        <div className="form-group">
-          <label>Nome Ospite *</label>
-          <input type="text" required value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value })} placeholder="Nome e cognome" />
-        </div>
+
         <div className="form-row">
           <div className="form-group">
             <label>Check-in *</label>
