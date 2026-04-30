@@ -158,7 +158,7 @@ app.post('/api/prenotazioni', async (req, res) => {
     const result = await pool.query(
       `INSERT INTO prenotazioni (appartamento_id, guest_name, check_in, check_out, num_ospiti, note, stato)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [appartamento_id, guest_name, check_in, check_out, num_ospiti, note, stato || 'confermata']
+      [appartamento_id, guest_name || null, check_in, check_out, num_ospiti, note, stato || 'confermata']
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
