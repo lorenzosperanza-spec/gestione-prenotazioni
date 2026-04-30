@@ -651,3 +651,164 @@ tbody tr:hover {
   transition: border-color 0.15s;
 }
 .assegna-select:focus { border-color: #2d5a3d; }
+
+/* ============================================
+   NAVIGATORE GIORNO (vista per giorno)
+   ============================================ */
+.dash-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.modalita-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.modalita-toggle button {
+  padding: 6px 16px;
+  border: 1px solid #aacfaa;
+  border-radius: 20px;
+  background: white;
+  color: #555;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.modalita-toggle button.active {
+  background: #2d5a3d;
+  color: white;
+  border-color: #2d5a3d;
+}
+
+.day-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin-bottom: 4px;
+}
+
+.day-nav-btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid #d0d0d0;
+  border-radius: 50%;
+  background: white;
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #555;
+  flex-shrink: 0;
+  transition: all 0.15s;
+  line-height: 1;
+}
+.day-nav-btn:hover:not(:disabled) {
+  background: #e8f4e8;
+  border-color: #aacfaa;
+  color: #2d5a3d;
+}
+.day-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.day-nav-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.day-nav-label {
+  font-size: 16px;
+  font-weight: 600;
+  color: #2d5a3d;
+  text-transform: capitalize;
+}
+
+.day-nav-shortcuts {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.day-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 10px;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  background: white;
+  cursor: pointer;
+  min-width: 44px;
+  transition: all 0.15s;
+  position: relative;
+}
+.day-pill:hover {
+  border-color: #aacfaa;
+  background: #f5fbf5;
+}
+.day-pill.active {
+  background: #2d5a3d;
+  border-color: #2d5a3d;
+  color: white;
+}
+.day-pill.has-work {
+  border-color: #aacfaa;
+}
+.day-pill-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: inherit;
+  opacity: 0.75;
+  text-transform: capitalize;
+}
+.day-pill-num {
+  font-size: 15px;
+  font-weight: 700;
+  color: inherit;
+  line-height: 1.2;
+}
+.day-pill-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #e67e22;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+.day-pill.active .day-pill-dot {
+  background: #ffd080;
+}
+
+.day-pill-more {
+  padding: 6px 12px;
+  border: 1px dashed #d0d0d0;
+  border-radius: 10px;
+  background: transparent;
+  color: #888;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+.day-pill-more:hover {
+  border-color: #aacfaa;
+  color: #2d5a3d;
+  background: #f5fbf5;
+}
