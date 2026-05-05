@@ -797,6 +797,37 @@ function ImportItalianWay({ appartamenti, onImport }) {
   const [loading, setLoading] = useState(false)
   const [risultato, setRisultato] = useState(null)
   const [erroreFile, setErroreFile] = useState('')
+  const [syncing, setSyncing] = useState(false)
+  const [syncStatus, setSyncStatus] = useState(null)
+  const [syncLog, setSyncLog] = useState([])
+
+  useEffect(() => {
+    caricaSyncLog()
+  }, [])
+
+  const caricaSyncLog = async () => {
+    try {
+      const res = await fetch(`${API_URL}/sync/status`)
+      const data = await res.json()
+      setSyncLog(data)
+    } catch {}
+  }
+
+  const eseguiSync = async (giorni = 30) => {
+    setSyncing(true)
+    setSyncStatus(null)
+    try {
+      const res = await fetch(`${API_URL}/sync/italianway?giorni=${giorni}`, { method: 'POST' })
+      const data = await res.json()
+      setSyncStatus(data)
+      caricaSyncLog()
+      if (data.importate > 0) setTimeout(() => onImport(), 1500)
+    } catch (err) {
+      setSyncStatus({ error: 'Errore di connessione: ' + err.message })
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   // Converte numero seriale Excel in data YYYY-MM-DD
   const excelDateToISO = (v) => {
@@ -903,9 +934,66 @@ function ImportItalianWay({ appartamenti, onImport }) {
     <div className="import-italianway">
       <h2>⬆ Import da ItalianWay</h2>
       <p className="import-desc">
-        Esporta il file Excel da <strong>KALISI → Pulizie da fare → Export Excel</strong>, poi caricalo qui.
-        Le prenotazioni verranno aggiunte automaticamente al gestionale.
+        Sincronizza automaticamente da KALISI oppure importa manualmente un file Excel.
       </p>
+
+      {/* SYNC AUTOMATICO */}
+      <div className="sync-panel">
+        <div className="sync-panel-header">
+          <div>
+            <h3>🔄 Sincronizzazione automatica</h3>
+            <p className="sync-desc">Legge direttamente da KALISI senza scaricare file. Attivo ogni giorno alle 04:00 e 09:00.</p>
+          </div>
+          <div className="sync-buttons">
+            <button className="btn-sync" onClick={() => eseguiSync(14)} disabled={syncing}>
+              {syncing ? '⏳ Sync...' : '🔄 Sync 2 settimane'}
+            </button>
+            <button className="btn-sync btn-sync-month" onClick={() => eseguiSync(30)} disabled={syncing}>
+              {syncing ? '⏳ Sync...' : '🔄 Sync 1 mese'}
+            </button>
+          </div>
+        </div>
+
+        {syncing && (
+          <div className="sync-loading">
+            <div className="sync-spinner" />
+            Connessione a KALISI in corso... questo può richiedere 30-60 secondi
+          </div>
+        )}
+
+        {syncStatus && !syncing && (
+          <div className={`import-result ${syncStatus.error ? 'result-warn' : syncStatus.importate > 0 ? 'result-ok' : 'result-warn'}`}>
+            {syncStatus.error
+              ? <div className="result-row">❌ {syncStatus.error}</div>
+              : <>
+                  <div className="result-row">✅ Importate: <strong>{syncStatus.importate}</strong></div>
+                  <div className="result-row">⏭ Aggiornate/saltate: <strong>{syncStatus.saltate}</strong></div>
+                  {syncStatus.errori?.filter(e => e.includes('non trovato')).length > 0 && (
+                    <div className="result-errors">
+                      <strong>Appartamenti non trovati nel gestionale:</strong>
+                      <ul>{syncStatus.errori.filter(e => e.includes('non trovato')).map((e,i) => <li key={i}>{e}</li>)}</ul>
+                    </div>
+                  )}
+                </>
+            }
+          </div>
+        )}
+
+        {syncLog.length > 0 && (
+          <div className="sync-log">
+            <strong>Ultimi sync:</strong>
+            {syncLog.map((s, i) => (
+              <div key={i} className="sync-log-row">
+                <span className="sync-log-date">{new Date(s.eseguito_il).toLocaleString('it-IT')}</span>
+                <span className="sync-log-ok">✅ {s.importate} importate</span>
+                <span className="sync-log-skip">⏭ {s.saltate} saltate</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="import-divider">oppure importa manualmente da Excel</div>
 
       {/* Drop zone */}
       <div
