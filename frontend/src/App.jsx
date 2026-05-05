@@ -88,9 +88,9 @@ function App() {
 
 /* ---------- DASHBOARD ---------- */
 function Dashboard({ prenotazioni, dipendenti }) {
-  const [modalita, setModalita] = useState('panoramica') // 'panoramica' | 'giorno'
+  const [modalita, setModalita] = useState('panoramica')
   const [orizzonte, setOrizzonte] = useState(14)
-  const [giornoOffset, setGiornoOffset] = useState(0) // 0=oggi, 1=domani, ecc.
+  const [giornoOffset, setGiornoOffset] = useState(0)
   const [assegnazioni, setAssegnazioni] = useState({})
 
   const oggi = new Date()
@@ -102,34 +102,55 @@ function Dashboard({ prenotazioni, dipendenti }) {
   const fineOrizzonte = new Date(oggi)
   fineOrizzonte.setDate(oggi.getDate() + orizzonte)
 
-  const prossimaPren = (appartamento_id, checkOutDate) => {
+  // Converte data in stringa YYYY-MM-DD senza problemi di timezone
+  const toDateStr = (d) => {
+    if (typeof d === 'string') return d.slice(0, 10)
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${dd}`
+  }
+
+  // Trova la prenotazione successiva confrontando stringhe YYYY-MM-DD (no timezone bug)
+  const prossimaPren = (appartamento_id, checkOutStr) => {
     const future = prenotazioni
-      .filter(p => p.appartamento_id === appartamento_id && new Date(p.check_in) > checkOutDate)
-      .sort((a, b) => new Date(a.check_in) - new Date(b.check_in))
+      .filter(p =>
+        String(p.appartamento_id) === String(appartamento_id) &&
+        toDateStr(p.check_in) > checkOutStr
+      )
+      .sort((a, b) => toDateStr(a.check_in).localeCompare(toDateStr(b.check_in)))
     return future[0] || null
   }
 
-  const filtraPerGiorno = (giorno) => prenotazioni
-    .filter(p => { const co = new Date(p.check_out); co.setHours(0,0,0,0); return co.getTime() === giorno.getTime() })
-    .map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, new Date(p.check_out)) }))
+  const filtraPerGiorno = (giorno) => {
+    const giornoStr = toDateStr(giorno)
+    return prenotazioni
+      .filter(p => toDateStr(p.check_out) === giornoStr)
+      .map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, toDateStr(p.check_out)) }))
+  }
 
   const pulizieOggi = filtraPerGiorno(oggi)
 
   const domani = new Date(oggi); domani.setDate(oggi.getDate() + 1)
   const pulizieFuture = prenotazioni
-    .filter(p => { const co = new Date(p.check_out); co.setHours(0,0,0,0); return co >= domani && co <= fineOrizzonte })
-    .sort((a, b) => new Date(a.check_out) - new Date(b.check_out))
-    .map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, new Date(p.check_out)) }))
+    .filter(p => {
+      const co = toDateStr(p.check_out)
+      return co >= toDateStr(domani) && co <= toDateStr(fineOrizzonte)
+    })
+    .sort((a, b) => toDateStr(a.check_out).localeCompare(toDateStr(b.check_out)))
+    .map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, toDateStr(p.check_out)) }))
 
   const pulizieGiornoSel = filtraPerGiorno(giornoSelezionato)
 
   const giorniA = (dateStr) => {
-    const d = new Date(dateStr); d.setHours(0,0,0,0)
-    return Math.round((d - oggi) / 86400000)
+    const diff = new Date(toDateStr(dateStr)) - new Date(toDateStr(oggi))
+    return Math.round(diff / 86400000)
   }
 
-  const fmtData = (dateStr) =>
-    new Date(dateStr).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' })
+  const fmtData = (dateStr) => {
+    const [y, m, d] = toDateStr(dateStr).split('-').map(Number)
+    return new Date(y, m - 1, d).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' })
+  }
 
   const fmtDataLunga = (d) =>
     d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })
@@ -137,6 +158,7 @@ function Dashboard({ prenotazioni, dipendenti }) {
   const labelGiorno = (offset) => {
     if (offset === 0) return 'Oggi'
     if (offset === 1) return 'Domani'
+    if (offset === -1) return 'Ieri'
     const d = new Date(oggi); d.setDate(oggi.getDate() + offset)
     return fmtDataLunga(d)
   }
@@ -146,7 +168,7 @@ function Dashboard({ prenotazioni, dipendenti }) {
 
   const PuliziaCard = ({ p, evidenzia }) => {
     const gg = giorniA(p.check_out)
-    const label = gg === 0 ? 'oggi' : gg === 1 ? 'domani' : `tra ${gg} giorni`
+    const label = gg === 0 ? 'oggi' : gg === 1 ? 'domani' : gg === -1 ? 'ieri' : gg > 0 ? `tra ${gg} giorni` : `${Math.abs(gg)} giorni fa`
     const dipAssegnato = assegnazioni[p.id] || ''
     return (
       <div className={`pulizia-card ${evidenzia ? 'pulizia-oggi' : ''}`}>
@@ -161,7 +183,7 @@ function Dashboard({ prenotazioni, dipendenti }) {
               ))}
             </select>
             {modalita === 'panoramica' && (
-              <span className={`pulizia-quando ${gg === 0 ? 'tag-oggi' : gg === 1 ? 'tag-domani' : 'tag-futuro'}`}>
+              <span className={`pulizia-quando ${gg === 0 ? 'tag-oggi' : gg === 1 ? 'tag-domani' : gg < 0 ? 'tag-passato' : 'tag-futuro'}`}>
                 🧹 {label}
               </span>
             )}
@@ -181,8 +203,8 @@ function Dashboard({ prenotazioni, dipendenti }) {
           </div>
           {(p.note || (p.prossima && p.prossima.note)) && (
             <div className="pulizia-note">
-              {p.note && <span>📋 Note check-out: {p.note}</span>}
-              {p.prossima && p.prossima.note && <span>📋 Note check-in: {p.prossima.note}</span>}
+              {p.note && p.note !== 'N/A' && <span>📋 Note: {p.note}</span>}
+              {p.prossima && p.prossima.note && p.prossima.note !== 'N/A' && <span>📋 Note check-in: {p.prossima.note}</span>}
             </div>
           )}
         </div>
@@ -190,9 +212,11 @@ function Dashboard({ prenotazioni, dipendenti }) {
     )
   }
 
+  // Pillole centrate sul giorno selezionato: 3 prima, quello corrente, 3 dopo
+  const pilloleOffsets = [-3, -2, -1, 0, 1, 2, 3].map(d => giornoOffset + d)
+
   return (
     <div className="dashboard">
-      {/* HEADER con data e toggle modalità */}
       <div className="dash-header">
         <h2>
           {oggi.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
@@ -240,40 +264,33 @@ function Dashboard({ prenotazioni, dipendenti }) {
       {/* VISTA PER GIORNO */}
       {modalita === 'giorno' && (
         <section className="dash-section">
-          {/* Navigatore giorno */}
           <div className="day-nav">
-            <button className="day-nav-btn" onClick={() => setGiornoOffset(o => Math.max(0, o - 1))} disabled={giornoOffset === 0}>
-              ‹
-            </button>
+            <button className="day-nav-btn" onClick={() => setGiornoOffset(o => o - 1)}>‹</button>
             <div className="day-nav-center">
               <div className="day-nav-label">{labelGiorno(giornoOffset)}</div>
               <div className="day-nav-shortcuts">
-                {[0,1,2,3,4,5,6].map(offset => {
+                {pilloleOffsets.map(offset => {
                   const d = new Date(oggi); d.setDate(oggi.getDate() + offset)
                   const hasWork = filtraPerGiorno(d).length > 0
+                  const isOggi = offset === 0
+                  const shortLabel = isOggi ? 'Oggi' : d.toLocaleDateString('it-IT', { weekday: 'short' })
                   return (
                     <button
                       key={offset}
-                      className={`day-pill ${giornoOffset === offset ? 'active' : ''} ${hasWork ? 'has-work' : ''}`}
+                      className={`day-pill ${giornoOffset === offset ? 'active' : ''} ${hasWork ? 'has-work' : ''} ${offset < 0 ? 'past' : ''}`}
                       onClick={() => setGiornoOffset(offset)}
                     >
-                      <span className="day-pill-label">
-                        {offset === 0 ? 'Oggi' : offset === 1 ? 'Dom' : d.toLocaleDateString('it-IT', { weekday: 'short' })}
-                      </span>
+                      <span className="day-pill-label">{shortLabel}</span>
                       <span className="day-pill-num">{d.getDate()}</span>
                       {hasWork && <span className="day-pill-dot" />}
                     </button>
                   )
                 })}
-                <button className="day-pill-more" onClick={() => setGiornoOffset(o => o + 7)}>+7</button>
               </div>
             </div>
-            <button className="day-nav-btn" onClick={() => setGiornoOffset(o => o + 1)}>
-              ›
-            </button>
+            <button className="day-nav-btn" onClick={() => setGiornoOffset(o => o + 1)}>›</button>
           </div>
 
-          {/* Pulizie del giorno selezionato */}
           <h3 className="dash-section-title" style={{ marginTop: '20px' }}>
             🧹 Pulizie {labelGiorno(giornoOffset).toLowerCase()} ({pulizieGiornoSel.length})
           </h3>
@@ -286,6 +303,7 @@ function Dashboard({ prenotazioni, dipendenti }) {
     </div>
   )
 }
+
 
 /* ---------- LISTA DIPENDENTI ---------- */
 function ListaDipendenti({ dipendenti, onUpdate }) {
