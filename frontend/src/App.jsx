@@ -116,7 +116,8 @@ function Dashboard({ prenotazioni, dipendenti }) {
     const future = prenotazioni
       .filter(p =>
         String(p.appartamento_id) === String(appartamento_id) &&
-        toDateStr(p.check_in) > checkOutStr
+        toDateStr(p.check_in) >= checkOutStr &&
+        toDateStr(p.check_out) !== checkOutStr
       )
       .sort((a, b) => toDateStr(a.check_in).localeCompare(toDateStr(b.check_in)))
     return future[0] || null
