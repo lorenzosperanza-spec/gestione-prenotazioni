@@ -812,3 +812,9 @@ tbody tr:hover {
   color: #2d5a3d;
   background: #f5fbf5;
 }
+
+/* Giorni passati nella navigazione */
+.tag-passato { background: #f0f0f0; color: #999; }
+.day-pill.past .day-pill-label,
+.day-pill.past .day-pill-num { opacity: 0.5; }
+.day-pill.past:not(.active) { border-color: #e8e8e8; background: #fafafa; }
