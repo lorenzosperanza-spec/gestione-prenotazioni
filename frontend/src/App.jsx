@@ -54,6 +54,9 @@ function App() {
           <button className={vista === 'nuovo_app' ? 'active' : ''} onClick={() => setVista('nuovo_app')}>
             + Nuovo Appartamento
           </button>
+          <button className={vista === 'import' ? 'active' : ''} onClick={() => setVista('import')}>
+            ⬆ Import ItalianWay
+          </button>
         </nav>
       </header>
 
@@ -80,6 +83,9 @@ function App() {
           <NuovoAppartamento
             onSave={() => { caricaDati(); setVista('appartamenti') }}
           />
+        )}
+        {vista === 'import' && (
+          <ImportItalianWay appartamenti={appartamenti} onImport={() => { caricaDati(); setVista('prenotazioni') }} />
         )}
       </main>
     </div>
@@ -779,6 +785,215 @@ function NuovoAppartamento({ onSave }) {
           {saving ? 'Salvataggio...' : 'Salva Appartamento'}
         </button>
       </form>
+    </div>
+  )
+}
+
+
+/* ---------- IMPORT ITALIANWAY ---------- */
+function ImportItalianWay({ appartamenti, onImport }) {
+  const [file, setFile] = useState(null)
+  const [anteprima, setAnteprima] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [risultato, setRisultato] = useState(null)
+  const [erroreFile, setErroreFile] = useState('')
+
+  // Converte numero seriale Excel in data YYYY-MM-DD
+  const excelDateToISO = (v) => {
+    if (!v) return null
+    if (typeof v === 'string' && v.match(/^\d{4}-\d{2}-\d{2}/)) return v.slice(0, 10)
+    if (typeof v === 'number') {
+      const ms = (v - 25569) * 86400000
+      const d = new Date(ms)
+      return d.toISOString().slice(0, 10)
+    }
+    return null
+  }
+
+  const leggiFile = (f) => {
+    setErroreFile('')
+    setRisultato(null)
+    setAnteprima([])
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      try {
+        // Usiamo SheetJS già disponibile via CDN se caricato, altrimenti fallback manuale
+        if (typeof XLSX === 'undefined') {
+          setErroreFile('Libreria XLSX non caricata. Ricarica la pagina.')
+          return
+        }
+        const wb = XLSX.read(e.target.result, { type: 'array' })
+        const ws = wb.Sheets[wb.SheetNames[0]]
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1 })
+
+        // Trova riga header (contiene "API ID")
+        let headerIdx = rows.findIndex(r => r.some(c => String(c).includes('API ID')))
+        if (headerIdx === -1) { setErroreFile('Formato non riconosciuto: colonna "API ID" non trovata'); return }
+
+        const headers = rows[headerIdx].map(h => String(h || '').trim())
+        const dataRows = rows.slice(headerIdx + 1).filter(r => r.length > 2 && r[0])
+
+        const idxOf = (name) => headers.findIndex(h => h.toLowerCase().includes(name.toLowerCase()))
+        const iApp = idxOf('Appartamento')
+        const iData = idxOf('Data')
+        const iProxCI = idxOf('Prox. check-in')
+        const iOspE = idxOf('Ospiti entranti')
+        const iOspU = idxOf('Ospiti uscenti')
+        const iNote = idxOf('Note')
+        const iCat = idxOf('Categoria')
+        const iApiId = idxOf('API ID')
+
+        const righe = dataRows.map(r => ({
+          api_id: r[iApiId],
+          appartamento: String(r[iApp] || '').trim(),
+          check_out: excelDateToISO(r[iData]),
+          check_in: excelDateToISO(r[iProxCI]),
+          ospiti_entranti: parseInt(r[iOspE]) || 0,
+          ospiti_uscenti: parseInt(r[iOspU]) || 0,
+          note: String(r[iNote] || '').trim(),
+          categoria: String(r[iCat] || '').trim(),
+        })).filter(r => r.appartamento && r.check_out)
+
+        setAnteprima(righe)
+      } catch (err) {
+        setErroreFile('Errore lettura file: ' + err.message)
+      }
+    }
+    reader.readAsArrayBuffer(f)
+  }
+
+  const handleFile = (e) => {
+    const f = e.target.files[0]
+    if (f) { setFile(f); leggiFile(f) }
+  }
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    const f = e.dataTransfer.files[0]
+    if (f && f.name.endsWith('.xlsx')) { setFile(f); leggiFile(f) }
+  }
+
+  const eseguiImport = async () => {
+    if (!anteprima.length) return
+    setLoading(true)
+    setRisultato(null)
+    try {
+      const res = await fetch(`${API_URL}/import/italianway`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ righe: anteprima })
+      })
+      const data = await res.json()
+      setRisultato(data)
+      if (data.importate > 0) setTimeout(() => onImport(), 1500)
+    } catch (err) {
+      setRisultato({ importate: 0, saltate: 0, errori: ['Errore di connessione'] })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Match appartamento con quelli nel db
+  const matchApp = (nome) => appartamenti.find(a =>
+    a.nome.toLowerCase() === nome.toLowerCase() ||
+    nome.toLowerCase().includes(a.nome.toLowerCase())
+  )
+
+  return (
+    <div className="import-italianway">
+      <h2>⬆ Import da ItalianWay</h2>
+      <p className="import-desc">
+        Esporta il file Excel da <strong>KALISI → Pulizie da fare → Export Excel</strong>, poi caricalo qui.
+        Le prenotazioni verranno aggiunte automaticamente al gestionale.
+      </p>
+
+      {/* Drop zone */}
+      <div
+        className={`drop-zone ${file ? 'has-file' : ''}`}
+        onDragOver={e => e.preventDefault()}
+        onDrop={handleDrop}
+        onClick={() => document.getElementById('xlsx-input').click()}
+      >
+        <input id="xlsx-input" type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleFile} />
+        {file ? (
+          <div className="drop-zone-ok">
+            <span className="drop-icon">✅</span>
+            <span>{file.name}</span>
+            <span className="drop-sub">{anteprima.length} righe trovate — clicca per cambiare file</span>
+          </div>
+        ) : (
+          <div className="drop-zone-empty">
+            <span className="drop-icon">📂</span>
+            <span>Trascina il file .xlsx qui oppure clicca per selezionarlo</span>
+          </div>
+        )}
+      </div>
+
+      {erroreFile && <div className="error-message">{erroreFile}</div>}
+
+      {/* Anteprima */}
+      {anteprima.length > 0 && !risultato && (
+        <div className="import-preview">
+          <h3>Anteprima ({anteprima.length} pulizie)</h3>
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Appartamento</th>
+                  <th>Match DB</th>
+                  <th>Check-out</th>
+                  <th>Prossimo check-in</th>
+                  <th>Ospiti in arrivo</th>
+                  <th>Note / Categoria</th>
+                </tr>
+              </thead>
+              <tbody>
+                {anteprima.map((r, i) => {
+                  const match = matchApp(r.appartamento)
+                  return (
+                    <tr key={i}>
+                      <td><strong>{r.appartamento}</strong></td>
+                      <td>
+                        {match
+                          ? <span className="match-ok">✅ {match.nome}</span>
+                          : <span className="match-ko">⚠️ non trovato</span>
+                        }
+                      </td>
+                      <td>{r.check_out}</td>
+                      <td>{r.check_in || '—'}</td>
+                      <td>{r.ospiti_entranti || '—'}</td>
+                      <td style={{ fontSize: '12px', color: '#777' }}>
+                        {[r.categoria !== '-' ? r.categoria : '', r.note !== '-' ? r.note : ''].filter(Boolean).join(' | ') || '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="import-warning">
+            ⚠️ Le righe con "non trovato" verranno saltate. Verifica che il nome appartamento in ItalianWay corrisponda a quello nel gestionale.
+          </div>
+          <button className="btn-import" onClick={eseguiImport} disabled={loading}>
+            {loading ? 'Importazione in corso...' : `⬆ Importa ${anteprima.length} prenotazioni`}
+          </button>
+        </div>
+      )}
+
+      {/* Risultato */}
+      {risultato && (
+        <div className={`import-result ${risultato.importate > 0 ? 'result-ok' : 'result-warn'}`}>
+          <div className="result-row">✅ Importate: <strong>{risultato.importate}</strong></div>
+          <div className="result-row">⏭ Saltate (già presenti o non trovate): <strong>{risultato.saltate}</strong></div>
+          {risultato.errori?.length > 0 && (
+            <div className="result-errors">
+              <strong>Dettagli saltate:</strong>
+              <ul>{risultato.errori.map((e, i) => <li key={i}>{e}</li>)}</ul>
+            </div>
+          )}
+          {risultato.importate > 0 && <p style={{ marginTop: '10px', color: '#2d6a4f' }}>Reindirizzamento alle prenotazioni...</p>}
+        </div>
+      )}
     </div>
   )
 }
