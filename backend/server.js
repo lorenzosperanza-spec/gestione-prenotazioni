@@ -303,3 +303,65 @@ app.get('/health', (req, res) => {
 app.listen(port, () => {
   console.log(`Server in esecuzione sulla porta ${port}`);
 });
+
+// ============ IMPORT ITALIANWAY ============
+// Riceve array di righe dal frontend (già parsato da xlsx.js) e crea prenotazioni
+app.post('/api/import/italianway', async (req, res) => {
+  const { righe } = req.body;
+  if (!righe || !Array.isArray(righe)) {
+    return res.status(400).json({ error: 'Dati non validi' });
+  }
+
+  const risultati = { importate: 0, saltate: 0, errori: [] };
+
+  for (const r of righe) {
+    try {
+      const { appartamento, check_out, check_in, ospiti_entranti, ospiti_uscenti, note, categoria, api_id } = r;
+
+      // Cerca appartamento per nome (match parziale)
+      const appRes = await pool.query(
+        `SELECT id, nome FROM appartamenti WHERE LOWER(nome) = LOWER($1) LIMIT 1`,
+        [appartamento]
+      );
+
+      if (appRes.rows.length === 0) {
+        risultati.saltate++;
+        risultati.errori.push(`Appartamento non trovato: "${appartamento}"`);
+        continue;
+      }
+
+      const appartamento_id = appRes.rows[0].id;
+
+      // Controlla se esiste già una prenotazione con stesso appartamento e check_out
+      const esistente = await pool.query(
+        `SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_out=$2`,
+        [appartamento_id, check_out]
+      );
+
+      if (esistente.rows.length > 0) {
+        risultati.saltate++;
+        continue; // già importata, skip
+      }
+
+      // Inserisce la prenotazione
+      await pool.query(
+        `INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato)
+         VALUES ($1, $2, $3, $4, $5, 'confermata')`,
+        [
+          appartamento_id,
+          check_in || check_out, // se non c'è check_in usa check_out
+          check_out,
+          ospiti_entranti || ospiti_uscenti || 1,
+          [categoria, note].filter(v => v && v !== '-').join(' | ') || null
+        ]
+      );
+
+      risultati.importate++;
+    } catch (err) {
+      console.error('Errore import riga:', err);
+      risultati.errori.push(`Errore su "${r.appartamento}": ${err.message}`);
+    }
+  }
+
+  res.json(risultati);
+});
