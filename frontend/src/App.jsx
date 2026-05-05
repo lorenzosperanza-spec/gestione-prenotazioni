@@ -117,7 +117,8 @@ function Dashboard({ prenotazioni, dipendenti }) {
       .filter(p =>
         String(p.appartamento_id) === String(appartamento_id) &&
         toDateStr(p.check_in) >= checkOutStr &&
-        toDateStr(p.check_out) !== checkOutStr
+        toDateStr(p.check_out) !== checkOutStr &&
+        p.stato !== 'cancellata'
       )
       .sort((a, b) => toDateStr(a.check_in).localeCompare(toDateStr(b.check_in)))
     return future[0] || null
@@ -202,10 +203,9 @@ function Dashboard({ prenotazioni, dipendenti }) {
               <span className="nessuna-pren">— nessuna prenotazione successiva</span>
             )}
           </div>
-          {(p.note || (p.prossima && p.prossima.note)) && (
+          {p.prossima && p.prossima.note && p.prossima.note !== 'N/A' && (
             <div className="pulizia-note">
-              {p.note && p.note !== 'N/A' && <span>📋 Note: {p.note}</span>}
-              {p.prossima && p.prossima.note && p.prossima.note !== 'N/A' && <span>📋 Note check-in: {p.prossima.note}</span>}
+              <span>📋 Note check-in: {p.prossima.note}</span>
             </div>
           )}
         </div>
