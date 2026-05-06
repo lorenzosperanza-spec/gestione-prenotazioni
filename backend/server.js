@@ -370,8 +370,6 @@ app.post('/api/import/italianway', async (req, res) => {
 
 // Funzione core: chiama KALISI e importa le pulizie per un range di date
 const syncItalianway = async (giorni = 30) => {
-  const cookie = process.env.ITALIANWAY_COOKIE;
-  if (!cookie) throw new Error('ITALIANWAY_COOKIE non configurato nelle variabili d\'ambiente');
 
   const risultati = { importate: 0, saltate: 0, errori: [], sincronizzato_il: new Date().toISOString() };
 
