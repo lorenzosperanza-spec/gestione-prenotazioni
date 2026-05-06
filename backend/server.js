@@ -461,10 +461,10 @@ const syncEmail = async () => {
     const oauth2Client = getGoogleOAuth2Client();
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
-    // Legge ultime 20 email non lette
+    // Legge ultime 20 email non lette (tutte le tab)
     const listRes = await gmail.users.messages.list({
       userId: 'me',
-      q: 'is:unread',
+      q: 'is:unread in:inbox',
       maxResults: 20
     });
 
@@ -483,16 +483,33 @@ const syncEmail = async () => {
         const oggetto = headers.find(h => h.name === 'Subject')?.value || '';
         const mittente = headers.find(h => h.name === 'From')?.value || '';
 
-        // Estrae testo dall'email
+        // Estrae testo dall'email (plain text o HTML)
         let testo = '';
-        const parts = email.data.payload.parts || [email.data.payload];
-        for (const part of parts) {
-          if (part.mimeType === 'text/plain' && part.body?.data) {
-            testo += Buffer.from(part.body.data, 'base64').toString('utf-8');
+        const extractText = (parts) => {
+          for (const part of parts || []) {
+            if (part.parts) extractText(part.parts);
+            if (part.mimeType === 'text/plain' && part.body?.data) {
+              testo += Buffer.from(part.body.data, 'base64').toString('utf-8') + '\n';
+            } else if (part.mimeType === 'text/html' && part.body?.data && !testo) {
+              const html = Buffer.from(part.body.data, 'base64').toString('utf-8');
+              // Rimuovi tag HTML
+              testo += html.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() + '\n';
+            }
           }
+        };
+        
+        if (email.data.payload.parts) {
+          extractText(email.data.payload.parts);
+        } else if (email.data.payload.body?.data) {
+          const raw = Buffer.from(email.data.payload.body.data, 'base64').toString('utf-8');
+          testo = email.data.payload.mimeType === 'text/html' 
+            ? raw.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim()
+            : raw;
         }
 
-        if (!testo) { risultati.saltate++; continue; }
+        console.log(`Email da "${mittente}" - oggetto: "${oggetto}" - testo (primi 200 char): ${testo.slice(0, 200)}`);
+
+        if (!testo.trim()) { risultati.saltate++; continue; }
 
         // Passa a Claude per interpretazione
         const parsed = await processaEmailConClaude(testo, mittente, oggetto);
