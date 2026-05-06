@@ -152,11 +152,18 @@ app.delete('/api/appartamenti/:id', async (req, res) => {
 // GET tutte le prenotazioni (con nome appartamento)
 app.get('/api/prenotazioni', async (req, res) => {
   try {
+    // Aggiunge colonne se non esistono
+    await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS dipendente_id INTEGER`).catch(()=>{});
+    await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS stato_pulizia VARCHAR(20) DEFAULT 'da_fare'`).catch(()=>{});
+    await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS data_pulizia_originale DATE`).catch(()=>{});
+
     const result = await pool.query(`
-      SELECT p.*, a.nome as appartamento_nome, a.via, a.pulizia, a.biancheria, a.logistica
+      SELECT p.*, a.nome as appartamento_nome, a.via, a.pulizia, a.biancheria, a.logistica,
+             d.nome_cognome as dipendente_nome
       FROM prenotazioni p
       LEFT JOIN appartamenti a ON p.appartamento_id = a.id
-      ORDER BY p.check_in DESC
+      LEFT JOIN dipendenti d ON p.dipendente_id = d.id
+      ORDER BY p.check_out ASC
     `);
     res.json(result.rows);
   } catch (err) {
@@ -291,6 +298,61 @@ app.delete('/api/dipendenti/:id', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore eliminazione dipendente' });
+  }
+});
+
+// ============ ROUTES PULIZIE (assegnazione + stato) ============
+
+// PATCH assegna dipendente a una prenotazione
+app.patch('/api/prenotazioni/:id/assegna', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { dipendente_id } = req.body;
+    
+    // Aggiunge colonna se non esiste (prima volta)
+    await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS dipendente_id INTEGER`);
+    
+    const result = await pool.query(
+      `UPDATE prenotazioni SET dipendente_id=$1 WHERE id=$2 RETURNING *`,
+      [dipendente_id || null, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Prenotazione non trovata' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH aggiorna stato pulizia (completata / posticipata / da_fare)
+app.patch('/api/prenotazioni/:id/stato-pulizia', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { stato_pulizia, nuova_data } = req.body;
+
+    await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS stato_pulizia VARCHAR(20) DEFAULT 'da_fare'`);
+    await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS data_pulizia_originale DATE`);
+
+    // Se posticipata, salva la data originale e sposta il check_out
+    if (stato_pulizia === 'posticipata' && nuova_data) {
+      const orig = await pool.query(`SELECT check_out, data_pulizia_originale FROM prenotazioni WHERE id=$1`, [id]);
+      const dataOriginale = orig.rows[0]?.data_pulizia_originale || orig.rows[0]?.check_out;
+      await pool.query(
+        `UPDATE prenotazioni SET stato_pulizia=$1, check_out=$2, data_pulizia_originale=$3 WHERE id=$4`,
+        [stato_pulizia, nuova_data, dataOriginale, id]
+      );
+    } else {
+      await pool.query(
+        `UPDATE prenotazioni SET stato_pulizia=$1 WHERE id=$2`,
+        [stato_pulizia, id]
+      );
+    }
+
+    const result = await pool.query(`SELECT * FROM prenotazioni WHERE id=$1`, [id]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
