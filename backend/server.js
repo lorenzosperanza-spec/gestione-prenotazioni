@@ -568,9 +568,10 @@ const syncItalianway = async (giorni = 30) => {
           );
 
           if (esistente.rows.length > 0) {
+            // Aggiorna check_in e ospiti con i dati freschi di KALISI
             await pool.query(
-              `UPDATE prenotazioni SET num_ospiti=$1 WHERE appartamento_id=$2 AND check_out=$3`,
-              [ospiti_entranti || 1, appartamento_id, checkOutStr]
+              `UPDATE prenotazioni SET num_ospiti=$1, check_in=$2 WHERE appartamento_id=$3 AND check_out=$4`,
+              [ospiti_entranti || 1, nextCiStr || checkOutStr, appartamento_id, checkOutStr]
             );
             risultati.saltate++;
             continue;
