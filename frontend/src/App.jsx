@@ -62,7 +62,7 @@ function App() {
 
       <main className="main">
         {vista === 'dashboard' && (
-          <Dashboard prenotazioni={prenotazioni} dipendenti={dipendenti} />
+          <Dashboard prenotazioni={prenotazioni} dipendenti={dipendenti} caricaDati={caricaDati} />
         )}
         {vista === 'appartamenti' && (
           <ListaAppartamenti appartamenti={appartamenti} onUpdate={caricaDati} />
@@ -93,7 +93,7 @@ function App() {
 }
 
 /* ---------- DASHBOARD ---------- */
-function Dashboard({ prenotazioni, dipendenti }) {
+function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
   const [modalita, setModalita] = useState('panoramica')
   const [orizzonte, setOrizzonte] = useState(14)
   const [giornoOffset, setGiornoOffset] = useState(0)
@@ -171,20 +171,49 @@ function Dashboard({ prenotazioni, dipendenti }) {
     return fmtDataLunga(d)
   }
 
-  const setAssegnazione = (prenId, dipId) =>
+  const salvaAssegnazione = async (prenId, dipId) => {
     setAssegnazioni(prev => ({ ...prev, [prenId]: dipId }))
+    try {
+      await fetch(`${API_URL}/prenotazioni/${prenId}/assegna`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dipendente_id: dipId || null })
+      })
+    } catch (err) { console.error('Errore salvataggio assegnazione:', err) }
+  }
+
+  const salvaStatoPulizia = async (prenId, stato, nuovaData) => {
+    try {
+      await fetch(`${API_URL}/prenotazioni/${prenId}/stato-pulizia`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stato_pulizia: stato, nuova_data: nuovaData })
+      })
+      caricaDati()
+    } catch (err) { console.error('Errore stato pulizia:', err) }
+  }
 
   const PuliziaCard = ({ p, evidenzia }) => {
     const gg = giorniA(p.check_out)
     const label = gg === 0 ? 'oggi' : gg === 1 ? 'domani' : gg === -1 ? 'ieri' : gg > 0 ? `tra ${gg} giorni` : `${Math.abs(gg)} giorni fa`
-    const dipAssegnato = assegnazioni[p.id] || ''
+    const dipAssegnato = assegnazioni[p.id] !== undefined ? assegnazioni[p.id] : (p.dipendente_id || '')
+    const statoPulizia = p.stato_pulizia || 'da_fare'
+    const [mostraPosticipa, setMostraPosticipa] = useState(false)
+    const [nuovaData, setNuovaData] = useState('')
+
+    const cardClass = `pulizia-card ${evidenzia ? 'pulizia-oggi' : ''} ${statoPulizia === 'completata' ? 'pulizia-completata' : ''} ${statoPulizia === 'posticipata' ? 'pulizia-posticipata' : ''}`
+
     return (
-      <div className={`pulizia-card ${evidenzia ? 'pulizia-oggi' : ''}`}>
+      <div className={cardClass}>
         <div className="pulizia-header">
-          <span className="pulizia-nome">{p.appartamento_nome}</span>
+          <div className="pulizia-header-left">
+            <span className="pulizia-nome">{p.appartamento_nome}</span>
+            {statoPulizia === 'completata' && <span className="badge-completata">✅ Completata</span>}
+            {statoPulizia === 'posticipata' && <span className="badge-posticipata">⏭ Posticipata</span>}
+          </div>
           <div className="pulizia-header-right">
             <select className="assegna-select" value={dipAssegnato}
-              onChange={e => setAssegnazione(p.id, e.target.value)}>
+              onChange={e => salvaAssegnazione(p.id, e.target.value)}>
               <option value="">👤 Assegna...</option>
               {dipendenti.map(d => (
                 <option key={d.id} value={d.id}>{d.nome_cognome}{d.patente ? ' 🚗' : ''}</option>
@@ -197,6 +226,7 @@ function Dashboard({ prenotazioni, dipendenti }) {
             )}
           </div>
         </div>
+
         <div className="pulizia-body">
           <div className="pulizia-info">
             <span>🚪 Check-out: <strong>{fmtData(p.check_out)}</strong></span>
@@ -212,6 +242,42 @@ function Dashboard({ prenotazioni, dipendenti }) {
           {p.prossima && p.prossima.note && p.prossima.note !== 'N/A' && (
             <div className="pulizia-note">
               <span>📋 Note check-in: {p.prossima.note}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Azioni stato pulizia */}
+        <div className="pulizia-azioni">
+          {statoPulizia !== 'completata' && (
+            <button className="btn-pulizia btn-completa"
+              onClick={() => salvaStatoPulizia(p.id, 'completata')}>
+              ✅ Segna completata
+            </button>
+          )}
+          {statoPulizia === 'completata' && (
+            <button className="btn-pulizia btn-annulla-stato"
+              onClick={() => salvaStatoPulizia(p.id, 'da_fare')}>
+              ↩ Annulla
+            </button>
+          )}
+          {statoPulizia !== 'completata' && !mostraPosticipa && (
+            <button className="btn-pulizia btn-posticipa"
+              onClick={() => setMostraPosticipa(true)}>
+              ⏭ Posticipa
+            </button>
+          )}
+          {mostraPosticipa && (
+            <div className="posticipa-form">
+              <input type="date" value={nuovaData} onChange={e => setNuovaData(e.target.value)}
+                min={toDateStr(new Date())} className="edit-input" />
+              <button className="btn-pulizia btn-completa" disabled={!nuovaData}
+                onClick={() => { salvaStatoPulizia(p.id, 'posticipata', nuovaData); setMostraPosticipa(false) }}>
+                Conferma
+              </button>
+              <button className="btn-pulizia btn-annulla-stato"
+                onClick={() => setMostraPosticipa(false)}>
+                ✕
+              </button>
             </div>
           )}
         </div>
