@@ -375,6 +375,16 @@ const syncItalianway = async (giorni = 30) => {
 
   const risultati = { importate: 0, saltate: 0, errori: [], sincronizzato_il: new Date().toISOString() };
 
+  // Login automatico con email+password
+  let cookie;
+  try {
+    cookie = await loginKalisi();
+  } catch (loginErr) {
+    console.error('Login KALISI fallito:', loginErr.message);
+    risultati.errori.push('Login KALISI fallito: ' + loginErr.message);
+    return risultati;
+  }
+
   // Genera date da oggi a oggi+giorni
   const dates = [];
   for (let i = 0; i <= giorni; i++) {
@@ -427,11 +437,22 @@ const syncItalianway = async (giorni = 30) => {
       );
 
       if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        console.error(`KALISI ${dateStr}: HTTP ${response.status} - ${body.slice(0, 200)}`);
         risultati.errori.push(`${dateStr}: HTTP ${response.status}`);
         continue;
       }
 
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('json')) {
+        const body = await response.text().catch(() => '');
+        console.error(`KALISI ${dateStr}: risposta non-JSON (${contentType}) - ${body.slice(0, 200)}`);
+        risultati.errori.push(`${dateStr}: risposta non-JSON - probabilmente redirect al login`);
+        continue;
+      }
+
       const json = await response.json();
+      console.log(`KALISI ${dateStr}: ${json.recordsTotal || 0} pulizie trovate`);
       if (!json.data) continue;
 
       for (const r of json.data) {
