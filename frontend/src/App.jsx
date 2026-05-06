@@ -866,6 +866,8 @@ function ImportItalianWay({ appartamenti, onImport }) {
   const [syncing, setSyncing] = useState(false)
   const [syncStatus, setSyncStatus] = useState(null)
   const [syncLog, setSyncLog] = useState([])
+  const [syncingEmail, setSyncingEmail] = useState(false)
+  const [syncEmailStatus, setSyncEmailStatus] = useState(null)
 
   useEffect(() => {
     caricaSyncLog()
@@ -1055,6 +1057,51 @@ function ImportItalianWay({ appartamenti, onImport }) {
                 <span className="sync-log-skip">⏭ {s.saltate} saltate</span>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      {/* SYNC EMAIL */}
+      <div className="sync-panel" style={{ marginTop: '16px' }}>
+        <div className="sync-panel-header">
+          <div>
+            <h3>📧 Sync da Email</h3>
+            <p className="sync-desc">
+              Legge le email non lette su prenotazionepuliziepl2@gmail.com e importa le prenotazioni automaticamente.
+              {' '}<a href="https://gestione-prenotazioni-production.up.railway.app/auth/google" target="_blank" rel="noreferrer" style={{color:'#2d5a3d'}}>Autorizza Gmail →</a>
+            </p>
+          </div>
+          <button className="btn-sync" onClick={async () => {
+            setSyncingEmail(true); setSyncEmailStatus(null);
+            try {
+              const res = await fetch(`${API_URL}/sync/email`, { method: 'POST' });
+              const data = await res.json();
+              setSyncEmailStatus(data);
+              if (data.importate > 0 || data.cancellate > 0) onImport();
+            } catch (err) { setSyncEmailStatus({ errore: 'Errore connessione' }); }
+            finally { setSyncingEmail(false); }
+          }} disabled={syncingEmail}>
+            {syncingEmail ? '⏳ Lettura email...' : '📧 Leggi email ora'}
+          </button>
+        </div>
+        {syncingEmail && <div className="sync-loading"><div className="sync-spinner" />Lettura email in corso...</div>}
+        {syncEmailStatus && !syncingEmail && (
+          <div className={`import-result ${syncEmailStatus.errore ? 'result-warn' : 'result-ok'}`} style={{marginTop:'12px'}}>
+            {syncEmailStatus.errore
+              ? <div className="result-row">❌ {syncEmailStatus.errore}</div>
+              : <>
+                  <div className="result-row">📨 Email analizzate: <strong>{syncEmailStatus.processate}</strong></div>
+                  <div className="result-row">✅ Prenotazioni importate: <strong>{syncEmailStatus.importate}</strong></div>
+                  <div className="result-row">🗑 Cancellate: <strong>{syncEmailStatus.cancellate}</strong></div>
+                  <div className="result-row">⏭ Non rilevanti: <strong>{syncEmailStatus.saltate}</strong></div>
+                  {syncEmailStatus.errori?.length > 0 && (
+                    <div className="result-errors">
+                      <strong>Appartamenti non trovati:</strong>
+                      <ul>{syncEmailStatus.errori.map((e,i) => <li key={i}>{e}</li>)}</ul>
+                    </div>
+                  )}
+                </>
+            }
           </div>
         )}
       </div>
