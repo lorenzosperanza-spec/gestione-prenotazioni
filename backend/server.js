@@ -356,6 +356,239 @@ app.patch('/api/prenotazioni/:id/stato-pulizia', async (req, res) => {
   }
 });
 
+// ============ GMAIL AUTH & SYNC ============
+
+const { google } = (() => { try { return require('googleapis'); } catch(e) { return { google: null }; } })();
+
+const getGoogleOAuth2Client = () => {
+  if (!google) throw new Error('googleapis non installato');
+  const client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    'https://gestione-prenotazioni-production.up.railway.app/auth/google/callback'
+  );
+  if (process.env.GOOGLE_REFRESH_TOKEN) {
+    client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+  }
+  return client;
+};
+
+// Step 1: Redirect a Google per autorizzazione
+app.get('/auth/google', (req, res) => {
+  try {
+    const oauth2Client = getGoogleOAuth2Client();
+    const url = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      prompt: 'consent',
+      scope: ['https://www.googleapis.com/auth/gmail.readonly']
+    });
+    res.redirect(url);
+  } catch (err) {
+    res.status(500).send('Errore: ' + err.message);
+  }
+});
+
+// Step 2: Google ci manda il codice, lo scambiamo con token
+app.get('/auth/google/callback', async (req, res) => {
+  try {
+    const { code } = req.query;
+    const oauth2Client = getGoogleOAuth2Client();
+    const { tokens } = await oauth2Client.getToken(code);
+    console.log('GOOGLE_REFRESH_TOKEN:', tokens.refresh_token);
+    res.send(`
+      <h2>✅ Autenticazione Gmail completata!</h2>
+      <p>Copia questo refresh token e aggiungilo come variabile <strong>GOOGLE_REFRESH_TOKEN</strong> su Railway:</p>
+      <textarea rows="4" cols="80" style="font-size:12px">${tokens.refresh_token}</textarea>
+      <p>Poi chiudi questa pagina e torna al gestionale.</p>
+    `);
+  } catch (err) {
+    res.status(500).send('Errore callback: ' + err.message);
+  }
+});
+
+// Processa email con Claude AI
+const processaEmailConClaude = async (emailText, mittente, oggetto) => {
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{
+          role: 'user',
+          content: `Sei un assistente che estrae prenotazioni di pulizie da email.
+          
+Analizza questa email e rispondi SOLO con un JSON valido (nessun testo prima o dopo).
+
+Oggetto: ${oggetto}
+Mittente: ${mittente}
+Testo:
+${emailText}
+
+Estrai tutte le prenotazioni/pulizie menzionate. Per ogni prenotazione indica:
+- appartamento: nome appartamento (string)
+- check_in: data inizio nel formato YYYY-MM-DD (anno corrente se non specificato: 2026)
+- check_out: data fine nel formato YYYY-MM-DD
+- ospiti: numero ospiti (integer, 0 se non specificato)
+- azione: "nuova" se è una nuova prenotazione, "cancella" se va cancellata
+
+Se il testo non contiene prenotazioni di pulizie (es. email del commercialista), rispondi con {"prenotazioni": [], "rilevante": false}
+
+Rispondi con: {"prenotazioni": [...], "rilevante": true/false}`
+        }]
+      })
+    });
+    const data = await response.json();
+    const text = data.content?.[0]?.text || '{}';
+    const clean = text.replace(/```json|```/g, '').trim();
+    return JSON.parse(clean);
+  } catch (err) {
+    console.error('Errore Claude:', err.message);
+    return { prenotazioni: [], rilevante: false };
+  }
+};
+
+// Legge email non lette e le processa
+const syncEmail = async () => {
+  if (!process.env.GOOGLE_REFRESH_TOKEN) {
+    return { errore: 'GOOGLE_REFRESH_TOKEN non configurato. Vai su /auth/google per autorizzare.' };
+  }
+
+  const risultati = { processate: 0, importate: 0, cancellate: 0, saltate: 0, errori: [] };
+
+  try {
+    const oauth2Client = getGoogleOAuth2Client();
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // Legge ultime 20 email non lette
+    const listRes = await gmail.users.messages.list({
+      userId: 'me',
+      q: 'is:unread',
+      maxResults: 20
+    });
+
+    const messages = listRes.data.messages || [];
+    console.log(`Gmail sync: ${messages.length} email non lette`);
+
+    for (const msg of messages) {
+      try {
+        const email = await gmail.users.messages.get({
+          userId: 'me',
+          id: msg.id,
+          format: 'full'
+        });
+
+        const headers = email.data.payload.headers;
+        const oggetto = headers.find(h => h.name === 'Subject')?.value || '';
+        const mittente = headers.find(h => h.name === 'From')?.value || '';
+
+        // Estrae testo dall'email
+        let testo = '';
+        const parts = email.data.payload.parts || [email.data.payload];
+        for (const part of parts) {
+          if (part.mimeType === 'text/plain' && part.body?.data) {
+            testo += Buffer.from(part.body.data, 'base64').toString('utf-8');
+          }
+        }
+
+        if (!testo) { risultati.saltate++; continue; }
+
+        // Passa a Claude per interpretazione
+        const parsed = await processaEmailConClaude(testo, mittente, oggetto);
+        risultati.processate++;
+
+        if (!parsed.rilevante || !parsed.prenotazioni?.length) {
+          risultati.saltate++;
+          // Segna come letta
+          await gmail.users.messages.modify({
+            userId: 'me', id: msg.id,
+            requestBody: { removeLabelIds: ['UNREAD'] }
+          });
+          continue;
+        }
+
+        for (const pren of parsed.prenotazioni) {
+          try {
+            const appRes = await pool.query(
+              'SELECT id FROM appartamenti WHERE LOWER(nome) = LOWER($1) LIMIT 1',
+              [pren.appartamento]
+            );
+
+            if (appRes.rows.length === 0) {
+              risultati.errori.push(`Appartamento non trovato: "${pren.appartamento}"`);
+              continue;
+            }
+
+            const appartamento_id = appRes.rows[0].id;
+
+            if (pren.azione === 'cancella') {
+              await pool.query(
+                'UPDATE prenotazioni SET stato=$1 WHERE appartamento_id=$2 AND check_in=$3 AND check_out=$4',
+                ['cancellata', appartamento_id, pren.check_in, pren.check_out]
+              );
+              risultati.cancellate++;
+            } else {
+              const esistente = await pool.query(
+                'SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3',
+                [appartamento_id, pren.check_in, pren.check_out]
+              );
+              if (esistente.rows.length > 0) {
+                await pool.query(
+                  'UPDATE prenotazioni SET num_ospiti=$1 WHERE id=$2',
+                  [pren.ospiti || 1, esistente.rows[0].id]
+                );
+              } else {
+                await pool.query(
+                  `INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, stato)
+                   VALUES ($1,$2,$3,$4,'confermata')`,
+                  [appartamento_id, pren.check_in, pren.check_out, pren.ospiti || 1]
+                );
+                risultati.importate++;
+              }
+            }
+          } catch (err) {
+            risultati.errori.push(`Errore prenotazione: ${err.message}`);
+          }
+        }
+
+        // Segna email come letta
+        await gmail.users.messages.modify({
+          userId: 'me', id: msg.id,
+          requestBody: { removeLabelIds: ['UNREAD'] }
+        });
+
+      } catch (err) {
+        risultati.errori.push(`Errore email: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    risultati.errori.push(`Errore Gmail: ${err.message}`);
+  }
+
+  return risultati;
+};
+
+// POST manuale sync email
+app.post('/api/sync/email', async (req, res) => {
+  try {
+    console.log('Sync email avviato');
+    const risultati = await syncEmail();
+    res.json(risultati);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Aggiungi sync email al cron (ogni ora)
+setInterval(async () => {
+  if (process.env.GOOGLE_REFRESH_TOKEN) {
+    console.log('Cron sync email avviato');
+    const r = await syncEmail().catch(e => ({ errore: e.message }));
+    console.log('Cron sync email:', JSON.stringify(r));
+  }
+}, 60 * 60 * 1000); // ogni ora
+
 // ============ HEALTH CHECK ============
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
