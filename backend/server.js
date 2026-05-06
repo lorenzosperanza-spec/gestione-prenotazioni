@@ -388,9 +388,26 @@ const loginKalisi = async () => {
   const loginPageHtml = await loginPageRes.text();
   const cookiesLogin = loginPageRes.headers.get('set-cookie') || '';
 
-  const csrfMatch = loginPageHtml.match(/name="authenticity_token"[^>]*value="([^"]+)"/);
-  if (!csrfMatch) throw new Error('CSRF token non trovato nella pagina di login');
-  const csrfToken = csrfMatch[1];
+  // Prova diversi pattern per il CSRF token
+  let csrfToken = null;
+  const csrfPatterns = [
+    /name="authenticity_token"[^>]*value="([^"]+)"/,
+    /value="([^"]+)"[^>]*name="authenticity_token"/,
+    /<meta[^>]*name="csrf-token"[^>]*content="([^"]+)"/,
+    /<meta[^>]*content="([^"]+)"[^>]*name="csrf-token"/,
+    /authenticity_token[^>]*value="([^"]+)"/,
+    /"authenticity_token","([^"]+)"/,
+  ];
+  for (const pattern of csrfPatterns) {
+    const match = loginPageHtml.match(pattern);
+    if (match) { csrfToken = match[1]; break; }
+  }
+  if (!csrfToken) {
+    // Log primi 500 char per debug
+    console.error('HTML login page (primi 500 char):', loginPageHtml.slice(0, 500));
+    throw new Error('CSRF token non trovato nella pagina di login');
+  }
+  console.log('CSRF token trovato, lunghezza:', csrfToken.length);
 
   const sessionCookieMatch = cookiesLogin.match(/_production_italianway_session=[^;]+/);
   const initialSessionCookie = sessionCookieMatch ? sessionCookieMatch[0] : '';
