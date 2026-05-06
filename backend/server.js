@@ -459,144 +459,119 @@ const syncItalianway = async (giorni = 30) => {
     return risultati;
   }
 
-  for (const dateStr of dates) {
-    try {
-      const params = new URLSearchParams({
-        draw: '1',
-        'columns[0][data]': '',
-        'columns[2][data]': 'ext_id',
-        'columns[3][data]': 'apt_code',
-        'columns[4][data]': 'apartment_name',
-        'columns[6][data]': 'housecleaning_category',
-        'columns[7][data]': 'notes',
-        'columns[8][data]': 'due_date.display',
-        'columns[12][data]': 'pax',
-        'columns[13][data]': 'next_checkin_datetime.display',
-        'columns[14][data]': 'next_checkin_pax',
-        'order[0][column]': '0',
-        'order[0][dir]': 'desc',
-        'start': '0',
-        'length': '100',
-        'search[value]': '',
-        'search[regex]': 'false',
-        'custom_search[date]': dateStr,
-        'custom_search[housekeeper_id]': '',
-        'custom_search[cleaner_id]': '',
-        'custom_search[include_backlog]': '0',
-        '_': Date.now().toString()
+  // Usa il Planner che contiene check-in e check-out reali
+  try {
+    const fine = new Date();
+    fine.setDate(fine.getDate() + giorni);
+    const startStr = new Date().toISOString().slice(0, 10);
+    const endStr = fine.toISOString().slice(0, 10);
+
+    console.log(`Fetch planner: da ${startStr} a ${endStr}`);
+
+    // Prima prova con fetch diretto
+    let events = [];
+    const plannerRes = await fetch(
+      `https://www.italianway.house/admin/housecleanings/planner_dhx?from=${startStr}&to=${endStr}`,
+      {
+        headers: {
+          'Cookie': cookie,
+          'Accept': 'application/json, text/javascript, */*; q=0.01',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Referer': 'https://www.italianway.house/admin/housecleanings/planner_dhx',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      }
+    );
+
+    const ct = plannerRes.headers.get('content-type') || '';
+    if (plannerRes.ok && ct.includes('json')) {
+      const json = await plannerRes.json();
+      events = Array.isArray(json) ? json : (json.data || []);
+      console.log(`Planner JSON: ${events.length} eventi`);
+    } else {
+      // Usa Puppeteer per estrarre gli eventi dal browser
+      console.log('Planner non JSON, uso Puppeteer...');
+      const puppeteer2 = require('puppeteer');
+      const browser2 = await puppeteer2.launch({
+        headless: 'new',
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
       });
-
-      const response = await fetch(
-        `https://www.italianway.house/admin/housecleanings?${params}`,
-        {
-          headers: {
-            'Cookie': cookie,
-            'Accept': 'application/json, text/javascript, */*; q=0.01',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Referer': 'https://www.italianway.house/admin/housecleanings',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      try {
+        const page2 = await browser2.newPage();
+        for (const cp of cookie.split('; ')) {
+          const idx = cp.indexOf('=');
+          if (idx > 0) {
+            const name = cp.slice(0, idx).trim();
+            const value = cp.slice(idx + 1).trim();
+            await page2.setCookie({ name, value, domain: 'www.italianway.house' }).catch(() => {});
           }
         }
-      );
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        console.error(`KALISI ${dateStr}: HTTP ${response.status} - ${body.slice(0, 200)}`);
-        risultati.errori.push(`${dateStr}: HTTP ${response.status}`);
-        continue;
+        await page2.goto('https://www.italianway.house/admin/housecleanings/planner_dhx', {
+          waitUntil: 'networkidle2', timeout: 30000
+        });
+        events = await page2.evaluate(() => {
+          try { return scheduler.getEvents(); } catch(e) { return []; }
+        });
+        console.log(`Puppeteer planner: ${events.length} eventi`);
+      } finally {
+        await browser2.close();
       }
-
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('json')) {
-        const body = await response.text().catch(() => '');
-        console.error(`KALISI ${dateStr}: risposta non-JSON - ${body.slice(0, 200)}`);
-        risultati.errori.push(`${dateStr}: risposta non-JSON - redirect al login`);
-        continue;
-      }
-
-      const json = await response.json();
-      console.log(`KALISI ${dateStr}: ${json.recordsTotal || 0} pulizie trovate`);
-      if (!json.data) continue;
-
-      for (const r of json.data) {
-        try {
-          const nomeMatch = r.apartment_name?.match(/>(.*?)<\/a>/);
-          const nomeRaw = nomeMatch ? nomeMatch[1].trim() : '';
-          // Decodifica entità HTML (&amp; -> &, ecc.)
-          const nomeAppartamento = nomeRaw
-            .replace(/&amp;/g, '&')
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'");
-          if (!nomeAppartamento) continue;
-
-          const checkOutTs = r.due_date?.timestamp;
-          if (!checkOutTs) continue;
-          const checkOutDate = new Date(checkOutTs * 1000);
-          const checkOutStr = checkOutDate.toISOString().slice(0, 10);
-
-          const nextCiTs = r.next_checkin_datetime?.timestamp;
-          const nextCiStr = nextCiTs ? new Date(nextCiTs * 1000).toISOString().slice(0, 10) : null;
-
-          const ospiti_entranti = parseInt(r.next_checkin_pax) || 0;
-          const note = r.notes && r.notes !== '-' ? r.notes : null;
-          const categoria = r.housecleaning_category || null;
-
-          const appRes = await pool.query(
-            `SELECT id FROM appartamenti WHERE LOWER(nome) = LOWER($1) LIMIT 1`,
-            [nomeAppartamento]
-          );
-
-          if (appRes.rows.length === 0) {
-            risultati.saltate++;
-            if (!risultati.errori.includes(`Appartamento non trovato: "${nomeAppartamento}"`)) {
-              risultati.errori.push(`Appartamento non trovato: "${nomeAppartamento}"`);
-            }
-            continue;
-          }
-
-          const appartamento_id = appRes.rows[0].id;
-
-          const esistente = await pool.query(
-            `SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_out=$2`,
-            [appartamento_id, checkOutStr]
-          );
-
-          if (esistente.rows.length > 0) {
-            // Aggiorna check_in e ospiti con i dati freschi di KALISI
-            await pool.query(
-              `UPDATE prenotazioni SET num_ospiti=$1, check_in=$2 WHERE appartamento_id=$3 AND check_out=$4`,
-              [ospiti_entranti || 1, nextCiStr || checkOutStr, appartamento_id, checkOutStr]
-            );
-            risultati.saltate++;
-            continue;
-          }
-
-          await pool.query(
-            `INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato)
-             VALUES ($1, $2, $3, $4, $5, 'confermata')`,
-            [
-              appartamento_id,
-              nextCiStr || checkOutStr,
-              checkOutStr,
-              ospiti_entranti || 1,
-              [categoria, note].filter(Boolean).join(' | ') || null
-            ]
-          );
-          risultati.importate++;
-
-        } catch (err) {
-          risultati.errori.push(`Errore riga: ${err.message}`);
-        }
-      }
-
-      await new Promise(r => setTimeout(r, 200));
-
-    } catch (err) {
-      risultati.errori.push(`Errore data ${dateStr}: ${err.message}`);
     }
+
+    for (const ev of events) {
+      try {
+        const nomeAppartamento = (ev.apt_name || '').trim();
+        if (!nomeAppartamento) continue;
+
+        const checkInStr = new Date(ev.start_date).toISOString().slice(0, 10);
+        const checkOutStr = new Date(ev.end_date).toISOString().slice(0, 10);
+        const ospiti = parseInt(ev.pax) || 1;
+        const note = ev.notes && ev.notes.trim() !== 'RESERVATION' ? ev.notes.trim() : null;
+
+        const appRes = await pool.query(
+          'SELECT id FROM appartamenti WHERE LOWER(nome) = LOWER($1) LIMIT 1',
+          [nomeAppartamento]
+        );
+
+        if (appRes.rows.length === 0) {
+          risultati.saltate++;
+          if (!risultati.errori.includes(`Appartamento non trovato: "${nomeAppartamento}"`)) {
+            risultati.errori.push(`Appartamento non trovato: "${nomeAppartamento}"`);
+          }
+          continue;
+        }
+
+        const appartamento_id = appRes.rows[0].id;
+
+        const esistente = await pool.query(
+          'SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3',
+          [appartamento_id, checkInStr, checkOutStr]
+        );
+
+        if (esistente.rows.length > 0) {
+          await pool.query(
+            'UPDATE prenotazioni SET num_ospiti=$1 WHERE appartamento_id=$2 AND check_in=$3 AND check_out=$4',
+            [ospiti, appartamento_id, checkInStr, checkOutStr]
+          );
+          risultati.saltate++;
+          continue;
+        }
+
+        await pool.query(
+          `INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`,
+          [appartamento_id, checkInStr, checkOutStr, ospiti, note]
+        );
+        risultati.importate++;
+
+      } catch (err) {
+        risultati.errori.push(`Errore evento: ${err.message}`);
+      }
+    }
+
+  } catch (err) {
+    risultati.errori.push(`Errore planner: ${err.message}`);
   }
+
 
   // Salva log sync
   await pool.query(`
