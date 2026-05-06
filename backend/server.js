@@ -369,89 +369,59 @@ app.post('/api/import/italianway', async (req, res) => {
 
 // ============ SYNC ITALIANWAY ============
 
-// Login a KALISI con email+password, ritorna cookie di sessione fresco
+// Login a KALISI con Puppeteer (browser headless)
 const loginKalisi = async () => {
   const email = process.env.ITALIANWAY_EMAIL;
   const password = process.env.ITALIANWAY_PASSWORD;
   const orgCode = process.env.ITALIANWAY_ORG || 'CG-001';
   if (!email || !password) throw new Error('ITALIANWAY_EMAIL o ITALIANWAY_PASSWORD non configurati');
 
-  // Step 1: GET login page per CSRF token
-  const loginPageRes = await fetch('https://www.italianway.house/staff/sign_in', {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    },
-    redirect: 'follow'
+  let puppeteer;
+  try {
+    puppeteer = require('puppeteer');
+  } catch(e) {
+    throw new Error('Puppeteer non installato: ' + e.message);
+  }
+
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
   });
 
-  const loginPageHtml = await loginPageRes.text();
-  const cookiesLogin = loginPageRes.headers.get('set-cookie') || '';
+  try {
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36');
 
-  // Prova diversi pattern per il CSRF token
-  let csrfToken = null;
-  const csrfPatterns = [
-    /name="authenticity_token"[^>]*value="([^"]+)"/,
-    /value="([^"]+)"[^>]*name="authenticity_token"/,
-    /<meta[^>]*name="csrf-token"[^>]*content="([^"]+)"/,
-    /<meta[^>]*content="([^"]+)"[^>]*name="csrf-token"/,
-    /authenticity_token[^>]*value="([^"]+)"/,
-    /"authenticity_token","([^"]+)"/,
-  ];
-  for (const pattern of csrfPatterns) {
-    const match = loginPageHtml.match(pattern);
-    if (match) { csrfToken = match[1]; break; }
+    console.log('Puppeteer: apertura pagina login KALISI...');
+    await page.goto('https://www.italianway.house/staff/sign_in', { waitUntil: 'networkidle2', timeout: 30000 });
+
+    // Compila il form
+    await page.type('input[name="staff[org_code]"]', orgCode);
+    await page.type('input[name="staff[email]"]', email);
+    await page.type('input[name="staff[password]"]', password);
+
+    // Click login e aspetta navigazione
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
+      page.click('input[type="submit"], button[type="submit"]')
+    ]);
+
+    const currentUrl = page.url();
+    console.log('Puppeteer: dopo login URL:', currentUrl);
+
+    if (currentUrl.includes('sign_in')) {
+      throw new Error('Login fallito - ancora sulla pagina di login. Verifica credenziali.');
+    }
+
+    // Raccoglie i cookie
+    const cookies = await page.cookies();
+    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+    console.log(`Login KALISI OK via Puppeteer - ${cookies.length} cookie ottenuti`);
+    return cookieStr;
+
+  } finally {
+    await browser.close();
   }
-  if (!csrfToken) {
-    // Log primi 500 char per debug
-    console.error('HTML login page (primi 500 char):', loginPageHtml.slice(0, 500));
-    throw new Error('CSRF token non trovato nella pagina di login');
-  }
-  console.log('CSRF token trovato, lunghezza:', csrfToken.length);
-
-  const sessionCookieMatch = cookiesLogin.match(/_production_italianway_session=[^;]+/);
-  const initialSessionCookie = sessionCookieMatch ? sessionCookieMatch[0] : '';
-
-  // Step 2: POST credenziali
-  const loginBody = new URLSearchParams({
-    'authenticity_token': csrfToken,
-    'staff[org_code]': orgCode,
-    'staff[email]': email,
-    'staff[password]': password,
-    'staff[remember_me]': '1',
-    'commit': 'Login'
-  });
-
-  const loginRes = await fetch('https://www.italianway.house/staff/sign_in', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Cookie': initialSessionCookie,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Referer': 'https://www.italianway.house/staff/sign_in',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    },
-    body: loginBody.toString(),
-    redirect: 'manual'
-  });
-
-  const setCookieHeader = loginRes.headers.get('set-cookie') || '';
-  const allCookies = cookiesLogin + '; ' + setCookieHeader;
-
-  const cookieParts = [];
-  const cookieNames = ['_production_italianway_session', 'remember_staff_token', 'org_code', 'login_email', 'remember_me_chk'];
-  for (const name of cookieNames) {
-    const match = allCookies.match(new RegExp(name + '=([^;,]+)'));
-    if (match) cookieParts.push(`${name}=${match[1]}`);
-  }
-
-  if (cookieParts.length < 2) {
-    throw new Error(`Login fallito - solo ${cookieParts.length} cookie ottenuti. Verifica credenziali.`);
-  }
-
-  const sessionCookie = cookieParts.join('; ');
-  console.log(`Login KALISI OK - ${cookieParts.length} cookie ottenuti`);
-  return sessionCookie;
 };
 
 // Funzione core: chiama KALISI e importa le pulizie per un range di date
