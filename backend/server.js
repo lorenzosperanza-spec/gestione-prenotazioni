@@ -393,17 +393,38 @@ const loginKalisi = async () => {
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36');
 
     console.log('Puppeteer: apertura pagina login KALISI...');
-    await page.goto('https://www.italianway.house/staff/sign_in', { waitUntil: 'networkidle2', timeout: 30000 });
+    await page.goto('https://www.italianway.house/admin/sign_in', { waitUntil: 'networkidle2', timeout: 30000 });
 
-    // Compila il form
-    await page.type('input[name="staff[org_code]"]', orgCode);
-    await page.type('input[name="staff[email]"]', email);
-    await page.type('input[name="staff[password]"]', password);
+    // I campi sono in ordine: org_code, email, password
+    const inputs = await page.$$('input[type="text"], input[type="email"], input:not([type="hidden"]):not([type="submit"]):not([type="checkbox"])');
+    console.log(`Trovati ${inputs.length} input nel form`);
 
-    // Click login e aspetta navigazione
+    // Primo input visibile = org_code, secondo = email, terzo = password
+    const visibleInputs = [];
+    for (const input of inputs) {
+      const visible = await input.isVisible().catch(() => false);
+      const type = await input.evaluate(el => el.type);
+      if (visible && type !== 'hidden') visibleInputs.push({ input, type });
+    }
+    console.log(`Input visibili: ${visibleInputs.length}`);
+
+    // Compila in base alla posizione e al tipo
+    for (let i = 0; i < visibleInputs.length; i++) {
+      const { input, type } = visibleInputs[i];
+      await input.click({ clickCount: 3 });
+      if (type === 'password') {
+        await input.type(password);
+      } else if (i === 0) {
+        await input.type(orgCode);
+      } else if (i === 1 || type === 'email') {
+        await input.type(email);
+      }
+    }
+
+    // Click bottone LOGIN
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
-      page.click('input[type="submit"], button[type="submit"]')
+      page.click('button, input[type="submit"]')
     ]);
 
     const currentUrl = page.url();
