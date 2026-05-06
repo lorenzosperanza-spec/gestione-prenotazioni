@@ -459,17 +459,6 @@ const syncItalianway = async (giorni = 30) => {
     return risultati;
   }
 
-  // Genera date da oggi a oggi+giorni
-  const dates = [];
-  for (let i = 0; i <= giorni; i++) {
-    const d = new Date();
-    d.setDate(d.getDate() + i);
-    const dd = String(d.getDate()).padStart(2, '0');
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const yyyy = d.getFullYear();
-    dates.push(`${dd}/${mm}/${yyyy}`);
-  }
-
   for (const dateStr of dates) {
     try {
       const params = new URLSearchParams({
@@ -532,7 +521,14 @@ const syncItalianway = async (giorni = 30) => {
       for (const r of json.data) {
         try {
           const nomeMatch = r.apartment_name?.match(/>(.*?)<\/a>/);
-          const nomeAppartamento = nomeMatch ? nomeMatch[1].trim() : '';
+          const nomeRaw = nomeMatch ? nomeMatch[1].trim() : '';
+          // Decodifica entità HTML (&amp; -> &, ecc.)
+          const nomeAppartamento = nomeRaw
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'");
           if (!nomeAppartamento) continue;
 
           const checkOutTs = r.due_date?.timestamp;
