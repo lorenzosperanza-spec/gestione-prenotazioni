@@ -366,14 +366,82 @@ app.post('/api/import/italianway', async (req, res) => {
   res.json(risultati);
 });
 
+
 // ============ SYNC ITALIANWAY ============
+
+// Login a KALISI con email+password, ritorna cookie di sessione fresco
+const loginKalisi = async () => {
+  const email = process.env.ITALIANWAY_EMAIL;
+  const password = process.env.ITALIANWAY_PASSWORD;
+  const orgCode = process.env.ITALIANWAY_ORG || 'CG-001';
+  if (!email || !password) throw new Error('ITALIANWAY_EMAIL o ITALIANWAY_PASSWORD non configurati');
+
+  // Step 1: GET login page per CSRF token
+  const loginPageRes = await fetch('https://www.italianway.house/staff/sign_in', {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    },
+    redirect: 'follow'
+  });
+
+  const loginPageHtml = await loginPageRes.text();
+  const cookiesLogin = loginPageRes.headers.get('set-cookie') || '';
+
+  const csrfMatch = loginPageHtml.match(/name="authenticity_token"[^>]*value="([^"]+)"/);
+  if (!csrfMatch) throw new Error('CSRF token non trovato nella pagina di login');
+  const csrfToken = csrfMatch[1];
+
+  const sessionCookieMatch = cookiesLogin.match(/_production_italianway_session=[^;]+/);
+  const initialSessionCookie = sessionCookieMatch ? sessionCookieMatch[0] : '';
+
+  // Step 2: POST credenziali
+  const loginBody = new URLSearchParams({
+    'authenticity_token': csrfToken,
+    'staff[org_code]': orgCode,
+    'staff[email]': email,
+    'staff[password]': password,
+    'staff[remember_me]': '1',
+    'commit': 'Login'
+  });
+
+  const loginRes = await fetch('https://www.italianway.house/staff/sign_in', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Cookie': initialSessionCookie,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': 'https://www.italianway.house/staff/sign_in',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    },
+    body: loginBody.toString(),
+    redirect: 'manual'
+  });
+
+  const setCookieHeader = loginRes.headers.get('set-cookie') || '';
+  const allCookies = cookiesLogin + '; ' + setCookieHeader;
+
+  const cookieParts = [];
+  const cookieNames = ['_production_italianway_session', 'remember_staff_token', 'org_code', 'login_email', 'remember_me_chk'];
+  for (const name of cookieNames) {
+    const match = allCookies.match(new RegExp(name + '=([^;,]+)'));
+    if (match) cookieParts.push(`${name}=${match[1]}`);
+  }
+
+  if (cookieParts.length < 2) {
+    throw new Error(`Login fallito - solo ${cookieParts.length} cookie ottenuti. Verifica credenziali.`);
+  }
+
+  const sessionCookie = cookieParts.join('; ');
+  console.log(`Login KALISI OK - ${cookieParts.length} cookie ottenuti`);
+  return sessionCookie;
+};
 
 // Funzione core: chiama KALISI e importa le pulizie per un range di date
 const syncItalianway = async (giorni = 30) => {
-
   const risultati = { importate: 0, saltate: 0, errori: [], sincronizzato_il: new Date().toISOString() };
 
-  // Login automatico con email+password
+  // Login automatico
   let cookie;
   try {
     cookie = await loginKalisi();
@@ -444,8 +512,8 @@ const syncItalianway = async (giorni = 30) => {
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.includes('json')) {
         const body = await response.text().catch(() => '');
-        console.error(`KALISI ${dateStr}: risposta non-JSON (${contentType}) - ${body.slice(0, 200)}`);
-        risultati.errori.push(`${dateStr}: risposta non-JSON - probabilmente redirect al login`);
+        console.error(`KALISI ${dateStr}: risposta non-JSON - ${body.slice(0, 200)}`);
+        risultati.errori.push(`${dateStr}: risposta non-JSON - redirect al login`);
         continue;
       }
 
@@ -455,18 +523,15 @@ const syncItalianway = async (giorni = 30) => {
 
       for (const r of json.data) {
         try {
-          // Estrae nome appartamento dal tag <a>
           const nomeMatch = r.apartment_name?.match(/>(.*?)<\/a>/);
           const nomeAppartamento = nomeMatch ? nomeMatch[1].trim() : '';
           if (!nomeAppartamento) continue;
 
-          // Data check-out da due_date.timestamp (unix seconds)
           const checkOutTs = r.due_date?.timestamp;
           if (!checkOutTs) continue;
           const checkOutDate = new Date(checkOutTs * 1000);
           const checkOutStr = checkOutDate.toISOString().slice(0, 10);
 
-          // Data prossimo check-in
           const nextCiTs = r.next_checkin_datetime?.timestamp;
           const nextCiStr = nextCiTs ? new Date(nextCiTs * 1000).toISOString().slice(0, 10) : null;
 
@@ -474,7 +539,6 @@ const syncItalianway = async (giorni = 30) => {
           const note = r.notes && r.notes !== '-' ? r.notes : null;
           const categoria = r.housecleaning_category || null;
 
-          // Cerca appartamento per nome esatto o parziale
           const appRes = await pool.query(
             `SELECT id FROM appartamenti WHERE LOWER(nome) = LOWER($1) LIMIT 1`,
             [nomeAppartamento]
@@ -490,14 +554,12 @@ const syncItalianway = async (giorni = 30) => {
 
           const appartamento_id = appRes.rows[0].id;
 
-          // Evita duplicati: stesso appartamento + check_out
           const esistente = await pool.query(
             `SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_out=$2`,
             [appartamento_id, checkOutStr]
           );
 
           if (esistente.rows.length > 0) {
-            // Aggiorna gli ospiti se cambiati
             await pool.query(
               `UPDATE prenotazioni SET num_ospiti=$1 WHERE appartamento_id=$2 AND check_out=$3`,
               [ospiti_entranti || 1, appartamento_id, checkOutStr]
@@ -524,7 +586,6 @@ const syncItalianway = async (giorni = 30) => {
         }
       }
 
-      // Pausa breve tra le date per non sovraccaricare il server
       await new Promise(r => setTimeout(r, 200));
 
     } catch (err) {
@@ -532,7 +593,7 @@ const syncItalianway = async (giorni = 30) => {
     }
   }
 
-  // Salva timestamp ultimo sync nel DB
+  // Salva log sync
   await pool.query(`
     CREATE TABLE IF NOT EXISTS sync_log (
       id SERIAL PRIMARY KEY,
@@ -551,7 +612,7 @@ const syncItalianway = async (giorni = 30) => {
   return risultati;
 };
 
-// POST manuale: triggera sync da frontend
+// POST manuale sync
 app.post('/api/sync/italianway', async (req, res) => {
   try {
     const giorni = parseInt(req.query.giorni) || 30;
@@ -564,7 +625,7 @@ app.post('/api/sync/italianway', async (req, res) => {
   }
 });
 
-// GET ultimo sync
+// GET status ultimi sync
 app.get('/api/sync/status', async (req, res) => {
   try {
     const result = await pool.query(
@@ -577,13 +638,11 @@ app.get('/api/sync/status', async (req, res) => {
 });
 
 // ============ CRON JOB ============
-// Sync automatico ogni giorno alle 02:00 e alle 07:00 (ora server UTC)
 const scheduleCron = () => {
   const checkCron = () => {
     const now = new Date();
     const h = now.getUTCHours();
     const m = now.getUTCMinutes();
-    // 02:00 UTC = 04:00 Roma, 07:00 UTC = 09:00 Roma
     if ((h === 2 || h === 7) && m === 0) {
       console.log(`Cron sync ItalianWay avviato alle ${now.toISOString()}`);
       syncItalianway(30).then(r => {
@@ -593,7 +652,6 @@ const scheduleCron = () => {
       });
     }
   };
-  // Controlla ogni minuto
   setInterval(checkCron, 60000);
   console.log('Cron job ItalianWay attivo (02:00 e 07:00 UTC)');
 };
