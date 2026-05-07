@@ -431,7 +431,7 @@ const leggiEmailPerLabel = async (gmail, labelId, tipoAzione) => {
 
 // ============ ANTEPRIMA EMAIL (legge per label, non importa) ============
 
-app.post('/api/sync/email/anteprima', async (req, res) => {
+app.post(['/api/sync/email/anteprima', '/api/sync/email/preview'], async (req, res) => {
   if (!process.env.GOOGLE_REFRESH_TOKEN) {
     return res.json({ errore: 'GOOGLE_REFRESH_TOKEN non configurato. Vai su /auth/google per autorizzare.' });
   }
