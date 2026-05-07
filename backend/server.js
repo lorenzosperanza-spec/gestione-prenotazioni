@@ -409,38 +409,64 @@ app.get('/auth/google/callback', async (req, res) => {
 // Processa email con Claude AI
 const processaEmailConClaude = async (emailText, mittente, oggetto) => {
   try {
+    const annoCorrente = new Date().getFullYear();
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 2000,
         messages: [{
           role: 'user',
-          content: `Sei un assistente che estrae prenotazioni di pulizie da email.
-          
-Analizza questa email e rispondi SOLO con un JSON valido (nessun testo prima o dopo).
+          content: `Sei un assistente che estrae prenotazioni di pulizie da email italiane.
+
+Analizza questa email e rispondi SOLO con un JSON valido, nessun testo prima o dopo.
 
 Oggetto: ${oggetto}
 Mittente: ${mittente}
-Testo:
+Testo completo:
 ${emailText}
 
-Estrai tutte le prenotazioni/pulizie menzionate. Per ogni prenotazione indica:
-- appartamento: nome appartamento (string)
-- check_in: data inizio nel formato YYYY-MM-DD (anno corrente se non specificato: 2026)
-- check_out: data fine nel formato YYYY-MM-DD
-- ospiti: numero ospiti (integer, 0 se non specificato)
-- azione: "nuova" se è una nuova prenotazione, "cancella" se va cancellata
+ISTRUZIONI:
+- Le email contengono liste di prenotazioni per appartamenti
+- Il formato tipico è: NOME APPARTAMENTO: seguito da righe con date GG/MM - GG/MM (xN) dove N = numero ospiti
+- Le date sono nel formato GG/MM senza anno — usa sempre l'anno ${annoCorrente}
+- Ogni riga di date è una prenotazione separata
+- Se oggetto contiene "CANCELLAZIONE" o il testo dice di cancellare, usa azione "cancella"
+- Altrimenti usa azione "nuova"
+- Estrai TUTTE le prenotazioni di TUTTI gli appartamenti nell'email
 
-Se il testo non contiene prenotazioni di pulizie (es. email del commercialista), rispondi con {"prenotazioni": [], "rilevante": false}
+Esempio input:
+CIPRO VATICAN HOME:
+29/04 - 02/05 (x4)
+02/05 - 05/05 (x2)
 
-Rispondi con: {"prenotazioni": [...], "rilevante": true/false}`
+DA BRICCA A MONTEVERDE:
+27/04 - 06/05 (x3)
+
+Esempio output:
+{"rilevante": true, "prenotazioni": [
+  {"appartamento": "CIPRO VATICAN HOME", "check_in": "${annoCorrente}-04-29", "check_out": "${annoCorrente}-05-02", "ospiti": 4, "azione": "nuova"},
+  {"appartamento": "CIPRO VATICAN HOME", "check_in": "${annoCorrente}-05-02", "check_out": "${annoCorrente}-05-05", "ospiti": 2, "azione": "nuova"},
+  {"appartamento": "DA BRICCA A MONTEVERDE", "check_in": "${annoCorrente}-04-27", "check_out": "${annoCorrente}-05-06", "ospiti": 3, "azione": "nuova"}
+]}
+
+Se l'email non contiene prenotazioni (es. email commerciale, newsletter), rispondi con:
+{"rilevante": false, "prenotazioni": []}`
         }]
       })
     });
     const data = await response.json();
+    if (data.error) {
+      console.error('Claude API error:', JSON.stringify(data.error));
+      return { prenotazioni: [], rilevante: false };
+    }
     const text = data.content?.[0]?.text || '{}';
+    console.log('Claude risposta:', text.slice(0, 300));
     const clean = text.replace(/```json|```/g, '').trim();
     return JSON.parse(clean);
   } catch (err) {
@@ -492,7 +518,6 @@ const syncEmail = async () => {
               testo += Buffer.from(part.body.data, 'base64').toString('utf-8') + '\n';
             } else if (part.mimeType === 'text/html' && part.body?.data && !testo) {
               const html = Buffer.from(part.body.data, 'base64').toString('utf-8');
-              // Rimuovi tag HTML
               testo += html.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() + '\n';
             }
           }
@@ -533,11 +558,20 @@ const syncEmail = async () => {
             );
 
             if (appRes.rows.length === 0) {
-              risultati.errori.push(`Appartamento non trovato: "${pren.appartamento}"`);
-              continue;
+              // Prova match parziale
+              const appResPartial = await pool.query(
+                'SELECT id, nome FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1',
+                [`%${pren.appartamento}%`]
+              );
+              if (appResPartial.rows.length === 0) {
+                risultati.errori.push(`Appartamento non trovato: "${pren.appartamento}"`);
+                continue;
+              }
+              pren._appartamento_id = appResPartial.rows[0].id;
+              console.log(`Match parziale: "${pren.appartamento}" -> "${appResPartial.rows[0].nome}"`);
             }
 
-            const appartamento_id = appRes.rows[0].id;
+            const appartamento_id = pren._appartamento_id || appRes.rows[0]?.id;
 
             if (pren.azione === 'cancella') {
               await pool.query(
@@ -617,7 +651,6 @@ app.listen(port, () => {
 });
 
 // ============ IMPORT ITALIANWAY ============
-// Riceve array di righe dal frontend (già parsato da xlsx.js) e crea prenotazioni
 app.post('/api/import/italianway', async (req, res) => {
   const { righe } = req.body;
   if (!righe || !Array.isArray(righe)) {
@@ -630,7 +663,6 @@ app.post('/api/import/italianway', async (req, res) => {
     try {
       const { appartamento, check_out, check_in, ospiti_entranti, ospiti_uscenti, note, categoria, api_id } = r;
 
-      // Cerca appartamento per nome (match parziale)
       const appRes = await pool.query(
         `SELECT id, nome FROM appartamenti WHERE LOWER(nome) = LOWER($1) LIMIT 1`,
         [appartamento]
@@ -644,7 +676,6 @@ app.post('/api/import/italianway', async (req, res) => {
 
       const appartamento_id = appRes.rows[0].id;
 
-      // Controlla se esiste già una prenotazione con stesso appartamento e check_out
       const esistente = await pool.query(
         `SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_out=$2`,
         [appartamento_id, check_out]
@@ -652,16 +683,15 @@ app.post('/api/import/italianway', async (req, res) => {
 
       if (esistente.rows.length > 0) {
         risultati.saltate++;
-        continue; // già importata, skip
+        continue;
       }
 
-      // Inserisce la prenotazione
       await pool.query(
         `INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato)
          VALUES ($1, $2, $3, $4, $5, 'confermata')`,
         [
           appartamento_id,
-          check_in || check_out, // se non c'è check_in usa check_out
+          check_in || check_out,
           check_out,
           ospiti_entranti || ospiti_uscenti || 1,
           [categoria, note].filter(v => v && v !== '-').join(' | ') || null
@@ -681,7 +711,6 @@ app.post('/api/import/italianway', async (req, res) => {
 
 // ============ SYNC ITALIANWAY ============
 
-// Login a KALISI con Puppeteer (browser headless)
 const loginKalisi = async () => {
   const email = process.env.ITALIANWAY_EMAIL;
   const password = process.env.ITALIANWAY_PASSWORD;
@@ -707,11 +736,9 @@ const loginKalisi = async () => {
     console.log('Puppeteer: apertura pagina login KALISI...');
     await page.goto('https://www.italianway.house/admin/sign_in', { waitUntil: 'networkidle2', timeout: 30000 });
 
-    // I campi sono in ordine: org_code, email, password
     const inputs = await page.$$('input[type="text"], input[type="email"], input:not([type="hidden"]):not([type="submit"]):not([type="checkbox"])');
     console.log(`Trovati ${inputs.length} input nel form`);
 
-    // Primo input visibile = org_code, secondo = email, terzo = password
     const visibleInputs = [];
     for (const input of inputs) {
       const visible = await input.isVisible().catch(() => false);
@@ -720,7 +747,6 @@ const loginKalisi = async () => {
     }
     console.log(`Input visibili: ${visibleInputs.length}`);
 
-    // Compila in base alla posizione e al tipo
     for (let i = 0; i < visibleInputs.length; i++) {
       const { input, type } = visibleInputs[i];
       await input.click({ clickCount: 3 });
@@ -733,7 +759,6 @@ const loginKalisi = async () => {
       }
     }
 
-    // Click bottone LOGIN
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
       page.click('button, input[type="submit"]')
@@ -746,7 +771,6 @@ const loginKalisi = async () => {
       throw new Error('Login fallito - ancora sulla pagina di login. Verifica credenziali.');
     }
 
-    // Raccoglie i cookie
     const cookies = await page.cookies();
     const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
     console.log(`Login KALISI OK via Puppeteer - ${cookies.length} cookie ottenuti`);
@@ -757,11 +781,9 @@ const loginKalisi = async () => {
   }
 };
 
-// Funzione core: chiama KALISI e importa le pulizie per un range di date
 const syncItalianway = async (giorni = 30) => {
   const risultati = { importate: 0, saltate: 0, errori: [], sincronizzato_il: new Date().toISOString() };
 
-  // Login automatico
   let cookie;
   try {
     cookie = await loginKalisi();
@@ -771,7 +793,6 @@ const syncItalianway = async (giorni = 30) => {
     return risultati;
   }
 
-  // Usa il Planner che contiene check-in e check-out reali
   try {
     const fine = new Date();
     fine.setDate(fine.getDate() + giorni);
@@ -780,7 +801,6 @@ const syncItalianway = async (giorni = 30) => {
 
     console.log(`Fetch planner: da ${startStr} a ${endStr}`);
 
-    // Prima prova con fetch diretto
     let events = [];
     const plannerRes = await fetch(
       `https://www.italianway.house/admin/housecleanings/planner_dhx?from=${startStr}&to=${endStr}`,
@@ -801,7 +821,6 @@ const syncItalianway = async (giorni = 30) => {
       events = Array.isArray(json) ? json : (json.data || []);
       console.log(`Planner JSON: ${events.length} eventi`);
     } else {
-      // Usa Puppeteer per estrarre gli eventi dal browser
       console.log('Planner non JSON, uso Puppeteer...');
       const puppeteer2 = require('puppeteer');
       const browser2 = await puppeteer2.launch({
@@ -884,8 +903,6 @@ const syncItalianway = async (giorni = 30) => {
     risultati.errori.push(`Errore planner: ${err.message}`);
   }
 
-
-  // Salva log sync
   await pool.query(`
     CREATE TABLE IF NOT EXISTS sync_log (
       id SERIAL PRIMARY KEY,
