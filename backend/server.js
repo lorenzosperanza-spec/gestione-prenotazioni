@@ -496,7 +496,7 @@ app.post(['/api/sync/email/anteprima', '/api/sync/email/preview'], async (req, r
 
 // ============ CONFERMA IMPORT EMAIL ============
 
-app.post('/api/sync/email/conferma', async (req, res) => {
+app.post(['/api/sync/email/conferma', '/api/sync/email/confirm'], async (req, res) => {
   const { prenotazioni, msgIds, labelIds } = req.body;
   if (!prenotazioni || !Array.isArray(prenotazioni)) {
     return res.status(400).json({ errore: 'Dati non validi' });
