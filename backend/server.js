@@ -620,15 +620,149 @@ const syncEmail = async () => {
   return risultati;
 };
 
-// POST manuale sync email
-app.post('/api/sync/email', async (req, res) => {
-  try {
-    console.log('Sync email avviato');
-    const risultati = await syncEmail();
-    res.json(risultati);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+// POST anteprima email (legge e analizza senza importare)
+app.post('/api/sync/email/preview', async (req, res) => {
+  if (!process.env.GOOGLE_REFRESH_TOKEN) {
+    return res.json({ errore: 'GOOGLE_REFRESH_TOKEN non configurato. Vai su /auth/google per autorizzare.' });
   }
+  try {
+    const oauth2Client = getGoogleOAuth2Client();
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    const listRes = await gmail.users.messages.list({
+      userId: 'me', q: 'is:unread in:inbox', maxResults: 20
+    });
+    const messages = listRes.data.messages || [];
+    console.log(`Anteprima email: ${messages.length} email non lette`);
+
+    const tuttePrenotazioni = [];
+    const errori = [];
+    const msgIds = [];
+
+    for (const msg of messages) {
+      try {
+        const email = await gmail.users.messages.get({ userId: 'me', id: msg.id, format: 'full' });
+        const headers = email.data.payload.headers;
+        const oggetto = headers.find(h => h.name === 'Subject')?.value || '';
+        const mittente = headers.find(h => h.name === 'From')?.value || '';
+
+        let testo = '';
+        const extractText = (parts) => {
+          for (const part of parts || []) {
+            if (part.parts) extractText(part.parts);
+            if (part.mimeType === 'text/plain' && part.body?.data) {
+              testo += Buffer.from(part.body.data, 'base64').toString('utf-8') + '\n';
+            } else if (part.mimeType === 'text/html' && part.body?.data && !testo) {
+              const html = Buffer.from(part.body.data, 'base64').toString('utf-8');
+              testo += html.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() + '\n';
+            }
+          }
+        };
+        if (email.data.payload.parts) extractText(email.data.payload.parts);
+        else if (email.data.payload.body?.data) {
+          const raw = Buffer.from(email.data.payload.body.data, 'base64').toString('utf-8');
+          testo = email.data.payload.mimeType === 'text/html'
+            ? raw.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() : raw;
+        }
+
+        if (!testo.trim()) continue;
+
+        const parsed = await processaEmailConClaude(testo, mittente, oggetto);
+        if (parsed.rilevante && parsed.prenotazioni?.length) {
+          tuttePrenotazioni.push(...parsed.prenotazioni);
+          msgIds.push(msg.id);
+          // Controlla appartamenti non trovati
+          for (const p of parsed.prenotazioni) {
+            const appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) = LOWER($1) LIMIT 1', [p.appartamento]);
+            if (appRes.rows.length === 0) {
+              const appPartial = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${p.appartamento}%`]);
+              if (appPartial.rows.length === 0 && !errori.includes(`"${p.appartamento}" non trovato nel DB`)) {
+                errori.push(`"${p.appartamento}" non trovato nel DB`);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        errori.push(`Errore email: ${err.message}`);
+      }
+    }
+
+    res.json({
+      emailAnalizzate: messages.length,
+      prenotazioni: tuttePrenotazioni,
+      msgIds,
+      errori
+    });
+  } catch (err) {
+    res.status(500).json({ errore: err.message });
+  }
+});
+
+// POST conferma import email (importa solo le prenotazioni selezionate e segna email come lette)
+app.post('/api/sync/email/confirm', async (req, res) => {
+  const { prenotazioni, msgIds } = req.body;
+  if (!prenotazioni || !Array.isArray(prenotazioni)) {
+    return res.status(400).json({ errore: 'Dati non validi' });
+  }
+
+  const risultati = { importate: 0, cancellate: 0, errori: [] };
+
+  for (const pren of prenotazioni) {
+    try {
+      const appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) = LOWER($1) LIMIT 1', [pren.appartamento]);
+      let appartamento_id = appRes.rows[0]?.id;
+
+      if (!appartamento_id) {
+        const appPartial = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${pren.appartamento}%`]);
+        appartamento_id = appPartial.rows[0]?.id;
+      }
+
+      if (!appartamento_id) {
+        risultati.errori.push(`Appartamento non trovato: "${pren.appartamento}"`);
+        continue;
+      }
+
+      if (pren.azione === 'cancella') {
+        await pool.query(
+          'UPDATE prenotazioni SET stato=$1 WHERE appartamento_id=$2 AND check_in=$3 AND check_out=$4',
+          ['cancellata', appartamento_id, pren.check_in, pren.check_out]
+        );
+        risultati.cancellate++;
+      } else {
+        const esistente = await pool.query(
+          'SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3',
+          [appartamento_id, pren.check_in, pren.check_out]
+        );
+        if (esistente.rows.length > 0) {
+          await pool.query('UPDATE prenotazioni SET num_ospiti=$1 WHERE id=$2', [pren.ospiti || 1, esistente.rows[0].id]);
+        } else {
+          await pool.query(
+            `INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, stato) VALUES ($1,$2,$3,$4,'confermata')`,
+            [appartamento_id, pren.check_in, pren.check_out, pren.ospiti || 1]
+          );
+          risultati.importate++;
+        }
+      }
+    } catch (err) {
+      risultati.errori.push(`Errore: ${err.message}`);
+    }
+  }
+
+  // Segna tutte le email elaborate come lette
+  if (process.env.GOOGLE_REFRESH_TOKEN && msgIds?.length) {
+    try {
+      const oauth2Client = getGoogleOAuth2Client();
+      const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+      for (const id of msgIds) {
+        await gmail.users.messages.modify({
+          userId: 'me', id,
+          requestBody: { removeLabelIds: ['UNREAD'] }
+        }).catch(() => {});
+      }
+    } catch {}
+  }
+
+  res.json(risultati);
 });
 
 // Aggiungi sync email al cron (ogni ora)
