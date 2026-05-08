@@ -585,6 +585,8 @@ function ImportItalianWay({ appartamenti, onImport }) {
   const [smoobuRisultato, setSmoobuRisultato] = useState(null)
   const [smoobuErrore, setSmoobuErrore] = useState('')
   const [smoobuMappingTemp, setSmoobuMappingTemp] = useState({})
+  const [smoobuSelezione, setSmoobuSelezione] = useState({})
+  const [smoobuOspitiOverride, setSmoobuOspitiOverride] = useState({})
 
   // Stati Google Sheet
   const [sheetLoading, setSheetLoading] = useState(false)
@@ -975,7 +977,11 @@ function ImportItalianWay({ appartamenti, onImport }) {
                 const mappingInit = {};
                 data.prenotazioni.forEach(p => { if (!p.mappato) mappingInit[p.nome_smoobu] = ''; });
                 setSmoobuMappingTemp(mappingInit);
-                setSmoobuAnteprima(data.prenotazioni || []);
+                const sel = {}
+              data.prenotazioni.forEach((p, i) => { sel[i] = !p.esistente })
+              setSmoobuSelezione(sel)
+              setSmoobuOspitiOverride({})
+              setSmoobuAnteprima(data.prenotazioni || []);
               }
             } catch (err) { setSmoobuRisultato({ errori: ['Errore connessione'] }); }
             finally { setSmoobuLoading(false); }
@@ -1019,11 +1025,28 @@ function ImportItalianWay({ appartamenti, onImport }) {
             <div className="table-container">
               <table>
                 <thead>
-                  <tr><th>Appartamento Smoobu</th><th>Match DB</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Portale</th><th>Stato</th></tr>
+                  <tr>
+                    <th style={{width:'36px'}}>
+                      <input type="checkbox"
+                        checked={smoobuAnteprima.filter(p => !p.esistente).every((_, i) => smoobuSelezione[smoobuAnteprima.findIndex(p2 => p2 === _)] !== false)}
+                        onChange={e => {
+                          const s = {};
+                          smoobuAnteprima.forEach((p, i) => { s[i] = p.esistente ? false : e.target.checked; });
+                          setSmoobuSelezione(s);
+                        }} />
+                    </th>
+                    <th>Appartamento Smoobu</th><th>Match DB</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Portale</th><th>Stato</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {smoobuAnteprima.map((p, i) => (
-                    <tr key={i} style={{ opacity: p.esistente ? 0.5 : 1 }}>
+                    <tr key={i} style={{ opacity: smoobuSelezione[i] === false || p.esistente ? 0.45 : 1 }}>
+                      <td>
+                        <input type="checkbox"
+                          checked={!p.esistente && smoobuSelezione[i] !== false}
+                          disabled={p.esistente}
+                          onChange={e => setSmoobuSelezione(prev => ({ ...prev, [i]: e.target.checked }))} />
+                      </td>
                       <td><strong>{p.nome_smoobu}</strong></td>
                       <td>
                         {p.appartamento_nome
@@ -1035,7 +1058,15 @@ function ImportItalianWay({ appartamenti, onImport }) {
                       </td>
                       <td>{p.check_in}</td>
                       <td>{p.check_out}</td>
-                      <td>{p.num_ospiti}</td>
+                      <td>
+                        <input
+                          type="number" min="1" max="20"
+                          className="edit-input"
+                          style={{ width: '60px', textAlign: 'center' }}
+                          value={smoobuOspitiOverride[i] ?? p.num_ospiti ?? 1}
+                          onChange={e => setSmoobuOspitiOverride(prev => ({ ...prev, [i]: parseInt(e.target.value) || 1 }))}
+                        />
+                      </td>
                       <td style={{ fontSize: '12px', color: '#777' }}>{p.portale || '—'}</td>
                       <td>{p.esistente ? <span style={{ color: '#777', fontSize: '12px' }}>già presente</span> : <span style={{ color: '#16a34a', fontSize: '12px' }}>da importare</span>}</td>
                     </tr>
@@ -1056,12 +1087,21 @@ function ImportItalianWay({ appartamenti, onImport }) {
                     }).catch(() => {});
                   }
                 }
-                // Poi importa
+                // Importa solo le selezionate con ospiti override
+                const daImportare = smoobuAnteprima
+                  .filter((_, i) => smoobuSelezione[i] !== false && !smoobuAnteprima[i].esistente)
+                  .map((p, _) => {
+                    const i = smoobuAnteprima.indexOf(p);
+                    return {
+                      ...p,
+                      num_ospiti: smoobuOspitiOverride[i] ?? p.num_ospiti ?? 1,
+                      appartamento_id: smoobuMappingTemp[p.nome_smoobu] || p.appartamento_id
+                    };
+                  });
                 try {
-                  const res = await fetch(`${API_URL}/sync/smoobu`, { method: 'POST' });
+                  const res = await fetch(`${API_URL}/sync/smoobu`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prenotazioni: daImportare }) });
                   const data = await res.json();
-                  setSmoobuRisultato(data);
-                  setSmoobuAnteprima([]);
+                  setSmoobuRisultato(data); setSmoobuAnteprima([]);
                   if (data.importate > 0) setTimeout(() => onImport(), 1500);
                 } catch { setSmoobuRisultato({ errori: ['Errore connessione'] }); }
                 finally { setSmoobuLoading(false); }
