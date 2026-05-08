@@ -88,7 +88,13 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
 
   const filtraPerGiorno = (giorno) => {
     const giornoStr = toDateStr(giorno)
-    return prenotazioni.filter(p => toDateStr(p.check_out) === giornoStr).map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, toDateStr(p.check_out)) }))
+    const normali = prenotazioni
+      .filter(p => toDateStr(p.check_out) === giornoStr && p.tipo !== 'spot')
+      .map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, toDateStr(p.check_out)) }))
+    const spot = prenotazioni
+      .filter(p => p.tipo === 'spot' && toDateStr(p.check_out) === giornoStr)
+      .map(p => ({ ...p, prossima: null }))
+    return [...normali, ...spot]
   }
 
   const pulizieOggi = filtraPerGiorno(oggi)
@@ -119,19 +125,33 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
   }
 
   const PuliziaCard = ({ p, evidenzia }) => {
-    const gg = giorniA(p.check_out)
+    const gg = p.tipo === 'spot' ? 0 : giorniA(p.check_out)
     const label = gg === 0 ? 'oggi' : gg === 1 ? 'domani' : gg === -1 ? 'ieri' : gg > 0 ? `tra ${gg} giorni` : `${Math.abs(gg)} giorni fa`
     const dipAssegnato = assegnazioni[p.id] !== undefined ? assegnazioni[p.id] : (p.dipendente_id || '')
     const statoPulizia = p.stato_pulizia || 'da_fare'
     const [mostraPosticipa, setMostraPosticipa] = useState(false)
     const [nuovaData, setNuovaData] = useState('')
-    const cardClass = `pulizia-card ${evidenzia ? 'pulizia-oggi' : ''} ${statoPulizia === 'completata' ? 'pulizia-completata' : ''} ${statoPulizia === 'posticipata' ? 'pulizia-posticipata' : ''}`
+    const [editNote, setEditNote] = useState(false)
+    const [noteText, setNoteText] = useState(p.note || '')
+    const cardClass = `pulizia-card ${evidenzia ? 'pulizia-oggi' : ''} ${statoPulizia === 'completata' ? 'pulizia-completata' : ''} ${statoPulizia === 'posticipata' ? 'pulizia-posticipata' : ''} ${p.tipo === 'spot' ? 'pulizia-spot' : ''}`
+
+    const salvaNota = async () => {
+      try {
+        await fetch(`${API_URL}/prenotazioni/${p.id}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...p, appartamento_id: p.appartamento_id, note: noteText })
+        })
+        caricaDati()
+        setEditNote(false)
+      } catch (err) { console.error('Errore salvataggio nota:', err) }
+    }
 
     return (
       <div className={cardClass}>
         <div className="pulizia-header">
           <div className="pulizia-header-left">
             <span className="pulizia-nome">{p.appartamento_nome}</span>
+            {p.tipo === 'spot' && <span className="badge-spot">🧹 Pulizia Spot</span>}
             {statoPulizia === 'completata' && <span className="badge-completata">✅ Completata</span>}
             {statoPulizia === 'posticipata' && <span className="badge-posticipata">⏭ Posticipata</span>}
           </div>
@@ -140,22 +160,54 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
               <option value="">👤 Assegna...</option>
               {dipendenti.map(d => <option key={d.id} value={d.id}>{d.nome_cognome}{d.patente ? ' 🚗' : ''}</option>)}
             </select>
-            {modalita === 'panoramica' && (
+            {modalita === 'panoramica' && p.tipo !== 'spot' && (
               <span className={`pulizia-quando ${gg === 0 ? 'tag-oggi' : gg === 1 ? 'tag-domani' : gg < 0 ? 'tag-passato' : 'tag-futuro'}`}>🧹 {label}</span>
             )}
           </div>
         </div>
         <div className="pulizia-body">
           <div className="pulizia-info">
-            <span>🚪 Check-out: <strong>{fmtData(p.check_out)}</strong></span>
-            {p.prossima ? (<><span>✅ Prossimo check-in: <strong>{fmtData(p.prossima.check_in)}</strong></span><span>👥 Ospiti in arrivo: <strong>{p.prossima.num_ospiti}</strong></span></>) : (<span className="nessuna-pren">— nessuna prenotazione successiva</span>)}
+            {p.tipo === 'spot' ? (
+              <span>👥 Ospiti da preparare: <strong>{p.num_ospiti}</strong></span>
+            ) : (
+              <>
+                <span>🚪 Check-out: <strong>{fmtData(p.check_out)}</strong></span>
+                {p.prossima ? (<><span>✅ Prossimo check-in: <strong>{fmtData(p.prossima.check_in)}</strong></span><span>👥 Ospiti in arrivo: <strong>{p.prossima.num_ospiti}</strong></span></>) : (<span className="nessuna-pren">— nessuna prenotazione successiva</span>)}
+              </>
+            )}
           </div>
-          {p.prossima && p.prossima.note && p.prossima.note !== 'N/A' && <div className="pulizia-note"><span>📋 Note check-in: {p.prossima.note}</span></div>}
+
+          {/* Note editabili inline */}
+          <div className="pulizia-note-section">
+            {editNote ? (
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '8px' }}>
+                <input
+                  className="edit-input"
+                  style={{ flex: 1 }}
+                  value={noteText}
+                  onChange={e => setNoteText(e.target.value)}
+                  placeholder="Aggiungi nota..."
+                  autoFocus
+                  onKeyDown={e => { if (e.key === 'Enter') salvaNota(); if (e.key === 'Escape') setEditNote(false); }}
+                />
+                <button className="btn-pulizia btn-completa" onClick={salvaNota}>✓</button>
+                <button className="btn-pulizia btn-annulla-stato" onClick={() => { setEditNote(false); setNoteText(p.note || ''); }}>✕</button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', cursor: 'pointer' }} onClick={() => setEditNote(true)}>
+                {noteText ? (
+                  <span className="pulizia-note-text">📋 {noteText} <span style={{ color: '#aaa', fontSize: '11px' }}>✏️</span></span>
+                ) : (
+                  <span style={{ color: '#aaa', fontSize: '12px' }}>+ Aggiungi nota ✏️</span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <div className="pulizia-azioni">
           {statoPulizia !== 'completata' && <button className="btn-pulizia btn-completa" onClick={() => salvaStatoPulizia(p.id, 'completata')}>✅ Segna completata</button>}
           {statoPulizia === 'completata' && <button className="btn-pulizia btn-annulla-stato" onClick={() => salvaStatoPulizia(p.id, 'da_fare')}>↩ Annulla</button>}
-          {statoPulizia !== 'completata' && !mostraPosticipa && <button className="btn-pulizia btn-posticipa" onClick={() => setMostraPosticipa(true)}>⏭ Posticipa</button>}
+          {statoPulizia !== 'completata' && !mostraPosticipa && p.tipo !== 'spot' && <button className="btn-pulizia btn-posticipa" onClick={() => setMostraPosticipa(true)}>⏭ Posticipa</button>}
           {mostraPosticipa && (
             <div className="posticipa-form">
               <input type="date" value={nuovaData} onChange={e => setNuovaData(e.target.value)} min={toDateStr(new Date())} className="edit-input" />
@@ -449,7 +501,9 @@ function ListaPrenotazioni({ prenotazioni, appartamenti, onUpdate }) {
 
 /* ---------- NUOVA PRENOTAZIONE ---------- */
 function NuovaPrenotazione({ appartamenti, onSave }) {
+  const [tipo, setTipo] = useState('prenotazione') // 'prenotazione' | 'spot'
   const [form, setForm] = useState({ appartamento_id: '', check_in: '', check_out: '', num_ospiti: 1, note: '' })
+  const [formSpot, setFormSpot] = useState({ appartamento_id: '', data: '', num_ospiti: 1, note: '' })
   const [saving, setSaving] = useState(false)
 
   const handleSubmit = async (e) => {
@@ -460,19 +514,74 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
     } catch { alert('Errore di connessione'); setSaving(false) }
   }
 
+  const handleSubmitSpot = async (e) => {
+    e.preventDefault(); if (saving) return; setSaving(true)
+    try {
+      // Pulizia spot: check_in = check_out = data, tipo = 'spot'
+      const payload = {
+        appartamento_id: formSpot.appartamento_id,
+        check_in: formSpot.data,
+        check_out: formSpot.data,
+        num_ospiti: formSpot.num_ospiti,
+        note: formSpot.note,
+        tipo: 'spot',
+        stato: 'confermata'
+      }
+      const res = await fetch(`${API_URL}/prenotazioni`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      if (res.ok) { onSave() } else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore'); setSaving(false) }
+    } catch { alert('Errore di connessione'); setSaving(false) }
+  }
+
   return (
     <div className="nuova-prenotazione">
       <h2>Nuova Prenotazione</h2>
-      <form onSubmit={handleSubmit}>
-        <div className="form-group"><label>Appartamento *</label><select required value={form.appartamento_id} onChange={(e) => setForm({ ...form, appartamento_id: e.target.value })}><option value="">Seleziona appartamento...</option>{appartamenti.map((a) => <option key={a.id} value={a.id}>{a.nome} - {a.via}</option>)}</select></div>
-        <div className="form-row">
-          <div className="form-group"><label>Check-in *</label><input type="date" required value={form.check_in} onChange={(e) => setForm({ ...form, check_in: e.target.value })} /></div>
-          <div className="form-group"><label>Check-out *</label><input type="date" required value={form.check_out} onChange={(e) => setForm({ ...form, check_out: e.target.value })} /></div>
-        </div>
-        <div className="form-group"><label>Numero Ospiti</label><input type="number" min="1" value={form.num_ospiti} onChange={(e) => setForm({ ...form, num_ospiti: parseInt(e.target.value) })} /></div>
-        <div className="form-group"><label>Note</label><textarea value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="Note aggiuntive..." /></div>
-        <button type="submit" className="btn-save" disabled={saving}>{saving ? 'Salvataggio...' : 'Salva Prenotazione'}</button>
-      </form>
+
+      {/* Toggle tipo */}
+      <div className="modalita-toggle" style={{ marginBottom: '24px' }}>
+        <button className={tipo === 'prenotazione' ? 'active' : ''} onClick={() => setTipo('prenotazione')}>📅 Prenotazione</button>
+        <button className={tipo === 'spot' ? 'active' : ''} onClick={() => setTipo('spot')}>🧹 Pulizia Spot</button>
+      </div>
+
+      {tipo === 'prenotazione' && (
+        <form onSubmit={handleSubmit}>
+          <div className="form-group"><label>Appartamento *</label><select required value={form.appartamento_id} onChange={(e) => setForm({ ...form, appartamento_id: e.target.value })}><option value="">Seleziona appartamento...</option>{appartamenti.map((a) => <option key={a.id} value={a.id}>{a.nome} - {a.via}</option>)}</select></div>
+          <div className="form-row">
+            <div className="form-group"><label>Check-in *</label><input type="date" required value={form.check_in} onChange={(e) => setForm({ ...form, check_in: e.target.value })} /></div>
+            <div className="form-group"><label>Check-out *</label><input type="date" required value={form.check_out} onChange={(e) => setForm({ ...form, check_out: e.target.value })} /></div>
+          </div>
+          <div className="form-group"><label>Numero Ospiti</label><input type="number" min="1" value={form.num_ospiti} onChange={(e) => setForm({ ...form, num_ospiti: parseInt(e.target.value) })} /></div>
+          <div className="form-group"><label>Note</label><textarea value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="Note aggiuntive..." /></div>
+          <button type="submit" className="btn-save" disabled={saving}>{saving ? 'Salvataggio...' : 'Salva Prenotazione'}</button>
+        </form>
+      )}
+
+      {tipo === 'spot' && (
+        <form onSubmit={handleSubmitSpot}>
+          <p style={{ color: '#666', marginBottom: '16px', fontSize: '14px' }}>
+            Una pulizia spot è una pulizia una tantum non legata a un check-in/check-out. Apparirà nella dashboard come le altre pulizie.
+          </p>
+          <div className="form-group">
+            <label>Appartamento *</label>
+            <select required value={formSpot.appartamento_id} onChange={(e) => setFormSpot({ ...formSpot, appartamento_id: e.target.value })}>
+              <option value="">Seleziona appartamento...</option>
+              {appartamenti.map((a) => <option key={a.id} value={a.id}>{a.nome} - {a.via}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Data pulizia *</label>
+            <input type="date" required value={formSpot.data} onChange={(e) => setFormSpot({ ...formSpot, data: e.target.value })} />
+          </div>
+          <div className="form-group">
+            <label>Numero ospiti da preparare</label>
+            <input type="number" min="1" value={formSpot.num_ospiti} onChange={(e) => setFormSpot({ ...formSpot, num_ospiti: parseInt(e.target.value) })} />
+          </div>
+          <div className="form-group">
+            <label>Note</label>
+            <textarea value={formSpot.note} onChange={(e) => setFormSpot({ ...formSpot, note: e.target.value })} placeholder="Es. pulire anche balcone, cambiare lenzuola..." />
+          </div>
+          <button type="submit" className="btn-save" disabled={saving}>{saving ? 'Salvataggio...' : '🧹 Salva Pulizia Spot'}</button>
+        </form>
+      )}
     </div>
   )
 }
