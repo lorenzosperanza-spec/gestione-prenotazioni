@@ -871,29 +871,6 @@ function ImportItalianWay({ appartamenti, onImport }) {
           </div>
         )}
       </div>
-        <div
-          className={`drop-zone ${smoobuFile ? 'has-file' : ''}`}
-          style={{ marginTop: '12px' }}
-          onDragOver={e => e.preventDefault()}
-          onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) { setSmoobuFile(f); leggiSmoobuCSV(f) } }}
-          onClick={() => document.getElementById('smoobu-csv-input').click()}
-        >
-          <input id="smoobu-csv-input" type="file" accept=".csv" style={{ display: 'none' }} onChange={handleSmoobuFile} />
-          {smoobuFile ? (
-            <div className="drop-zone-ok">
-              <span className="drop-icon">✅</span>
-              <span>{smoobuFile.name}</span>
-              <span className="drop-sub">{smoobuAnteprima.length} prenotazioni trovate — clicca per cambiare file</span>
-            </div>
-          ) : (
-            <div className="drop-zone-empty">
-              <span className="drop-icon">📂</span>
-              <span>Trascina il file .csv Smoobu qui oppure clicca per selezionarlo</span>
-            </div>
-          )}
-        </div>
-        {smoobuErrore && <div className="error-message">{smoobuErrore}</div>}
-      </div>
 
       <div className="import-divider">oppure importa manualmente da Excel</div>
 
