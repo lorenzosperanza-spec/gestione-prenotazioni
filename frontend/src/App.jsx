@@ -521,6 +521,7 @@ function ImportItalianWay({ appartamenti, onImport }) {
   const [syncingEmail, setSyncingEmail] = useState(false)
   const [syncEmailStatus, setSyncEmailStatus] = useState(null)
   const [anteprimaEmail, setAnteprimaEmail] = useState(null)
+  const [emailMatchOverride, setEmailMatchOverride] = useState({})
   const [importandoEmail, setImportandoEmail] = useState(false)
   const [selezionate, setSelezionate] = useState({})
 
@@ -557,10 +558,20 @@ function ImportItalianWay({ appartamenti, onImport }) {
 
   const confermaImportEmail = async () => {
     if (!anteprimaEmail) return; setImportandoEmail(true)
-    const prenotazioniDaImportare = anteprimaEmail.prenotazioni.filter((_, i) => selezionate[i])
+    // Applica override appartamento alle prenotazioni selezionate
+    const prenotazioniDaImportare = anteprimaEmail.prenotazioni
+      .filter((_, i) => selezionate[i])
+      .map((p, origIdx) => {
+        // Trova l'indice originale
+        const i = anteprimaEmail.prenotazioni.indexOf(p)
+        if (emailMatchOverride[i]) {
+          return { ...p, appartamento_id_override: parseInt(emailMatchOverride[i]) }
+        }
+        return p
+      })
     try {
       const res = await fetch(`${API_URL}/sync/email/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prenotazioni: prenotazioniDaImportare, messageIds: anteprimaEmail.messageIds }) })
-      const data = await res.json(); setAnteprimaEmail(null); setSyncEmailStatus(data)
+      const data = await res.json(); setAnteprimaEmail(null); setSyncEmailStatus(data); setEmailMatchOverride({})
       if (data.importate > 0 || data.cancellate > 0) onImport()
     } catch (err) { setSyncEmailStatus({ errore: 'Errore: ' + err.message }) } finally { setImportandoEmail(false) }
   }
@@ -750,11 +761,23 @@ function ImportItalianWay({ appartamenti, onImport }) {
                 <tbody>
                   {anteprimaEmail.prenotazioni.map((p, i) => {
                     const match = matchApp(p.appartamento)
+                    const matchOverride = emailMatchOverride[i]
+                    const matchFinale = matchOverride ? appartamenti.find(a => String(a.id) === String(matchOverride)) : match
                     return (
                       <tr key={i} style={{ opacity: selezionate[i] ? 1 : 0.4 }}>
                         <td><input type="checkbox" checked={!!selezionate[i]} onChange={e => setSelezionate(prev => ({ ...prev, [i]: e.target.checked }))} /></td>
                         <td><strong>{p.appartamento}</strong></td>
-                        <td>{match ? <span className="match-ok">✅ {match.nome}</span> : <span className="match-ko">⚠️ non trovato</span>}</td>
+                        <td>
+                          <select
+                            className="edit-input"
+                            style={{ minWidth: '180px', fontSize: '12px' }}
+                            value={matchOverride || match?.id || ''}
+                            onChange={e => setEmailMatchOverride(prev => ({ ...prev, [i]: e.target.value }))}
+                          >
+                            {!match && !matchOverride && <option value="">⚠️ non trovato</option>}
+                            {appartamenti.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
+                          </select>
+                        </td>
                         <td>{fmtData(p.check_in)}</td>
                         <td>{fmtData(p.check_out)}</td>
                         <td>{p.ospiti || '—'}</td>
