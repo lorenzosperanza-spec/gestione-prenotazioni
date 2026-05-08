@@ -774,93 +774,193 @@ app.get('/api/sync/status', async (req, res) => {
 
 // ============ SYNC SMOOBU (API diretta con cookie) ============
 
-const syncSmoobu = async () => {
-  const cookie = process.env.SMOOBU_COOKIE;
-  if (!cookie) {
-    console.log('Smoobu: SMOOBU_COOKIE non configurato, skip.');
-    return { importate: 0, saltate: 0, errori: ['SMOOBU_COOKIE non configurato su Railway'] };
+// Crea tabella mapping nomi Smoobu → appartamenti DB
+const initSmoobuMapping = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS smoobu_mapping (
+      id SERIAL PRIMARY KEY,
+      nome_smoobu VARCHAR(200) NOT NULL UNIQUE,
+      appartamento_id INTEGER NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+};
+initSmoobuMapping().catch(console.error);
+
+// Cerca appartamento con match esatto, parziale, o mapping salvato
+const trovaTramiteNome = async (nomeSmoobu) => {
+  // 1. Controlla mapping personalizzato
+  const mappingRes = await pool.query(
+    'SELECT appartamento_id FROM smoobu_mapping WHERE LOWER(nome_smoobu)=LOWER($1) LIMIT 1',
+    [nomeSmoobu]
+  );
+  if (mappingRes.rows.length > 0) return mappingRes.rows[0].appartamento_id;
+
+  // 2. Match esatto
+  let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [nomeSmoobu]);
+  if (appRes.rows.length > 0) return appRes.rows[0].id;
+
+  // 3. Nome Smoobu contenuto nel nome DB (es. "The cozy Vatican flat" dentro "The cozy Vatican flat (Santamaura)")
+  appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${nomeSmoobu}%`]);
+  if (appRes.rows.length > 0) return appRes.rows[0].id;
+
+  // 4. Nome DB contenuto nel nome Smoobu
+  const tutti = await pool.query('SELECT id, nome FROM appartamenti');
+  for (const row of tutti.rows) {
+    if (nomeSmoobu.toLowerCase().includes(row.nome.toLowerCase())) return row.id;
   }
 
-  const risultati = { importate: 0, saltate: 0, errori: [] };
+  return null;
+};
 
+// Fetch prenotazioni da API Smoobu
+const fetchSmoobuBookings = async () => {
+  const cookie = process.env.SMOOBU_COOKIE;
+  if (!cookie) throw new Error('SMOOBU_COOKIE non configurato su Railway');
+
+  const oggi = new Date();
+  const da = new Date(oggi); da.setDate(da.getDate() - 7);
+  const a = new Date(oggi); a.setDate(a.getDate() + 90);
+  const daStr = da.toISOString().slice(0, 10);
+  const aStr = a.toISOString().slice(0, 10);
+
+  const headers = {
+    'Cookie': cookie,
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'it-IT,it;q=0.9',
+    'Referer': 'https://login.smoobu.com/it/cockpit/calendar',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+    'X-Requested-With': 'XMLHttpRequest'
+  };
+
+  let tuttePrenotazioni = [];
+  let pagina = 1;
+
+  while (true) {
+    const url = `https://login.smoobu.com/api/v1/users/1683032/bookings?filter%5Bfrom%5D=${daStr}&filter%5Bto%5D=${aStr}&page%5Bsize%5D=100&page%5Bnumber%5D=${pagina}`;
+    const res = await fetch(url, { headers });
+
+    if (res.status === 401 || res.status === 403) throw new Error('Cookie Smoobu scaduto — aggiorna SMOOBU_COOKIE su Railway');
+    if (!res.ok) throw new Error(`Errore API Smoobu: ${res.status}`);
+
+    const data = await res.json();
+    const bookings = data.bookings || data.data || (Array.isArray(data) ? data : []);
+    tuttePrenotazioni.push(...bookings);
+    console.log(`Smoobu: pagina ${pagina}, ${bookings.length} prenotazioni`);
+    if (bookings.length < 100) break;
+    pagina++;
+  }
+
+  return tuttePrenotazioni;
+};
+
+// GET mapping esistenti
+app.get('/api/smoobu/mapping', async (req, res) => {
   try {
-    const oggi = new Date();
-    const da = new Date(oggi); da.setDate(da.getDate() - 7);
-    const a = new Date(oggi); a.setDate(a.getDate() + 90);
-    const daStr = da.toISOString().slice(0, 10);
-    const aStr = a.toISOString().slice(0, 10);
+    const result = await pool.query(`
+      SELECT m.*, a.nome as appartamento_nome
+      FROM smoobu_mapping m
+      LEFT JOIN appartamenti a ON m.appartamento_id = a.id
+      ORDER BY m.nome_smoobu
+    `);
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
-    console.log(`Smoobu: chiamata API da ${daStr} a ${aStr}`);
+// POST salva mapping
+app.post('/api/smoobu/mapping', async (req, res) => {
+  try {
+    const { nome_smoobu, appartamento_id } = req.body;
+    await pool.query(
+      `INSERT INTO smoobu_mapping (nome_smoobu, appartamento_id) VALUES ($1,$2)
+       ON CONFLICT (nome_smoobu) DO UPDATE SET appartamento_id=$2`,
+      [nome_smoobu, appartamento_id]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
-    const headers = {
-      'Cookie': cookie,
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'it-IT,it;q=0.9',
-      'Referer': 'https://login.smoobu.com/it/cockpit/calendar',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-      'X-Requested-With': 'XMLHttpRequest'
-    };
+// POST anteprima Smoobu (non importa, solo mostra)
+app.post('/api/sync/smoobu/anteprima', async (req, res) => {
+  try {
+    const bookings = await fetchSmoobuBookings();
+    const prenotazioni = [];
 
-    let tuttePrenotazioni = [];
-    let pagina = 1;
+    for (const b of bookings) {
+      const nomeSmoobu = b.apartment?.name || b.property?.name || b.apartmentName || b.unit?.name || '';
+      if (!nomeSmoobu) continue;
+      const checkIn = b.arrival || b.arrivalDate || b.checkIn || '';
+      const checkOut = b.departure || b.departureDate || b.checkOut || '';
+      if (!checkIn || !checkOut) continue;
+      const stato = b.status || b.bookingStatus || '';
+      if (stato.toLowerCase().includes('cancel')) continue;
 
-    while (true) {
-      const url = `https://login.smoobu.com/api/v1/users/1683032/bookings?filter%5Bfrom%5D=${daStr}&filter%5Bto%5D=${aStr}&page%5Bsize%5D=100&page%5Bnumber%5D=${pagina}`;
-      console.log(`Smoobu: fetch pagina ${pagina}...`);
+      const appartamento_id = await trovaTramiteNome(nomeSmoobu);
+      const appNome = appartamento_id
+        ? (await pool.query('SELECT nome FROM appartamenti WHERE id=$1', [appartamento_id])).rows[0]?.nome
+        : null;
 
-      const res = await fetch(url, { headers });
-      console.log(`Smoobu: status ${res.status}`);
-
-      if (res.status === 401 || res.status === 403) {
-        risultati.errori.push('Cookie Smoobu scaduto — aggiorna SMOOBU_COOKIE su Railway');
-        break;
+      // Controlla se già esistente
+      let esistente = false;
+      if (appartamento_id) {
+        const dup = await pool.query(
+          'SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3',
+          [appartamento_id, checkIn, checkOut]
+        );
+        esistente = dup.rows.length > 0;
       }
-      if (!res.ok) {
-        risultati.errori.push(`Errore API Smoobu: ${res.status}`);
-        break;
-      }
 
-      const data = await res.json();
-      console.log(`Smoobu: risposta keys: ${Object.keys(data).join(', ')}`);
-
-      const bookings = data.bookings || data.data || (Array.isArray(data) ? data : []);
-      tuttePrenotazioni.push(...bookings);
-      console.log(`Smoobu: pagina ${pagina}, ${bookings.length} prenotazioni`);
-
-      if (bookings.length < 100) break;
-      pagina++;
+      prenotazioni.push({
+        nome_smoobu: nomeSmoobu,
+        appartamento_id,
+        appartamento_nome: appNome,
+        check_in: checkIn,
+        check_out: checkOut,
+        num_ospiti: (parseInt(b.adults) || 0) + (parseInt(b.children) || 0) || 1,
+        portale: b.channel?.name || null,
+        esistente,
+        mappato: !!appartamento_id
+      });
     }
 
-    console.log(`Smoobu: ${tuttePrenotazioni.length} prenotazioni totali`);
+    res.json({ prenotazioni, totale: prenotazioni.length });
+  } catch (err) {
+    res.status(500).json({ errore: err.message });
+  }
+});
 
-    for (const b of tuttePrenotazioni) {
+const syncSmoobu = async (soloIds) => {
+  const risultati = { importate: 0, saltate: 0, errori: [] };
+  try {
+    const bookings = await fetchSmoobuBookings();
+
+    for (const b of bookings) {
       try {
         const nomeApp = b.apartment?.name || b.property?.name || b.apartmentName || b.unit?.name || '';
         if (!nomeApp) { risultati.saltate++; continue; }
-
         const checkIn = b.arrival || b.arrivalDate || b.checkIn || '';
         const checkOut = b.departure || b.departureDate || b.checkOut || '';
         if (!checkIn || !checkOut) { risultati.saltate++; continue; }
-
         const stato = b.status || b.bookingStatus || '';
         if (stato.toLowerCase().includes('cancel')) { risultati.saltate++; continue; }
 
-        const numOspiti = (parseInt(b.adults) || 0) + (parseInt(b.children) || 0) || 1;
-        const portale = b.channel?.name || b.referrer || null;
-        const note = b.guestNote || b.assistantNote || b.notes || null;
-
-        let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [nomeApp]);
-        if (appRes.rows.length === 0) {
-          appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${nomeApp}%`]);
-        }
-        if (appRes.rows.length === 0) {
+        const appartamento_id = await trovaTramiteNome(nomeApp);
+        if (!appartamento_id) {
           risultati.saltate++;
           const msg = `Appartamento non trovato: "${nomeApp}"`;
           if (!risultati.errori.includes(msg)) risultati.errori.push(msg);
           continue;
         }
 
-        const appartamento_id = appRes.rows[0].id;
+        // Se soloIds specificati, importa solo quelli
+        if (soloIds && !soloIds.some(k => k.app_id === appartamento_id && k.check_in === checkIn && k.check_out === checkOut)) {
+          risultati.saltate++; continue;
+        }
+
+        const numOspiti = (parseInt(b.adults) || 0) + (parseInt(b.children) || 0) || 1;
+        const portale = b.channel?.name || null;
+        const note = b.guestNote || b.assistantNote || b.notes || null;
+
         const esistente = await pool.query(
           'SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3',
           [appartamento_id, checkIn, checkOut]
@@ -879,7 +979,6 @@ const syncSmoobu = async () => {
         }
       } catch (err) { risultati.errori.push(`Errore: ${err.message}`); }
     }
-
   } catch (err) {
     console.error('Smoobu sync errore:', err.message);
     risultati.errori.push(err.message);
