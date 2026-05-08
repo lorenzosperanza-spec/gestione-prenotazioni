@@ -772,220 +772,108 @@ app.get('/api/sync/status', async (req, res) => {
   } catch { res.json([]); }
 });
 
-// ============ SYNC SMOOBU (automatico con Puppeteer) ============
+// ============ SYNC SMOOBU (API diretta con cookie) ============
 
 const syncSmoobu = async () => {
-  const email = process.env.SMOOBU_EMAIL;
-  const password = process.env.SMOOBU_PASSWORD;
-  if (!email || !password) {
-    console.log('Smoobu: SMOOBU_EMAIL o SMOOBU_PASSWORD non configurati, skip.');
-    return { importate: 0, saltate: 0, errori: ['Credenziali Smoobu non configurate'] };
+  const cookie = process.env.SMOOBU_COOKIE;
+  if (!cookie) {
+    console.log('Smoobu: SMOOBU_COOKIE non configurato, skip.');
+    return { importate: 0, saltate: 0, errori: ['SMOOBU_COOKIE non configurato su Railway'] };
   }
 
   const risultati = { importate: 0, saltate: 0, errori: [] };
-  let puppeteer;
-  try { puppeteer = require('puppeteer'); }
-  catch(e) { risultati.errori.push('Puppeteer non installato'); return risultati; }
-
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-  });
 
   try {
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36');
+    const oggi = new Date();
+    const da = new Date(oggi); da.setDate(da.getDate() - 7);
+    const a = new Date(oggi); a.setDate(a.getDate() + 90);
+    const daStr = da.toISOString().slice(0, 10);
+    const aStr = a.toISOString().slice(0, 10);
 
-    console.log('Smoobu: login in corso...');
-    await page.goto('https://login.smoobu.com/en/login', { waitUntil: 'networkidle2', timeout: 30000 });
+    console.log(`Smoobu: chiamata API da ${daStr} a ${aStr}`);
 
-    // Aspetta che il form sia visibile
-    await page.waitForSelector('input', { timeout: 10000 });
-    await new Promise(r => setTimeout(r, 2000));
+    const headers = {
+      'Cookie': cookie,
+      'Accept': 'application/json, text/plain, */*',
+      'Accept-Language': 'it-IT,it;q=0.9',
+      'Referer': 'https://login.smoobu.com/it/cockpit/calendar',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+      'X-Requested-With': 'XMLHttpRequest'
+    };
 
-    // Debug: logga tutti gli input trovati
-    const inputsInfo = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('input')).map(i => ({
-        type: i.type, name: i.name, id: i.id, placeholder: i.placeholder, autocomplete: i.autocomplete
-      }));
-    });
-    console.log('Smoobu inputs trovati:', JSON.stringify(inputsInfo));
+    let tuttePrenotazioni = [];
+    let pagina = 1;
 
-    // Compila via JavaScript direttamente nel DOM (più affidabile con SPA React)
-    await page.evaluate((em, pw) => {
-      const inputs = Array.from(document.querySelectorAll('input'));
-      const emailInput = inputs.find(i => i.type === 'email' || i.name === 'email' || i.autocomplete === 'email' || (i.type !== 'password' && i.type !== 'hidden' && i.type !== 'checkbox' && i.type !== 'submit'));
-      const passInput = inputs.find(i => i.type === 'password');
-      if (emailInput) {
-        emailInput.focus();
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        nativeInputValueSetter.call(emailInput, em);
-        emailInput.dispatchEvent(new Event('input', { bubbles: true }));
-        emailInput.dispatchEvent(new Event('change', { bubbles: true }));
+    while (true) {
+      const url = `https://login.smoobu.com/api/v1/users/1683032/bookings?filter%5Bfrom%5D=${daStr}&filter%5Bto%5D=${aStr}&page%5Bsize%5D=100&page%5Bnumber%5D=${pagina}`;
+      console.log(`Smoobu: fetch pagina ${pagina}...`);
+
+      const res = await fetch(url, { headers });
+      console.log(`Smoobu: status ${res.status}`);
+
+      if (res.status === 401 || res.status === 403) {
+        risultati.errori.push('Cookie Smoobu scaduto — aggiorna SMOOBU_COOKIE su Railway');
+        break;
       }
-      if (passInput) {
-        passInput.focus();
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        nativeInputValueSetter.call(passInput, pw);
-        passInput.dispatchEvent(new Event('input', { bubbles: true }));
-        passInput.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-    }, email, password);
-
-    await new Promise(r => setTimeout(r, 1000));
-    console.log('Smoobu: credenziali inserite via JS, invio form...');
-
-    // Submit — prova tutti i metodi
-    const submitted = await page.evaluate(() => {
-      const btn = document.querySelector('button[type="submit"]') || document.querySelector('button:not([type])') || document.querySelector('input[type="submit"]');
-      if (btn) { btn.click(); return true; }
-      const form = document.querySelector('form');
-      if (form) { form.submit(); return true; }
-      return false;
-    });
-    console.log('Smoobu: submit eseguito:', submitted);
-
-    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
-    await new Promise(r => setTimeout(r, 2000));
-
-    const currentUrl = page.url();
-    console.log('Smoobu: dopo login URL:', currentUrl);
-    if (currentUrl.includes('login')) throw new Error('Login Smoobu fallito — verifica credenziali');
-
-    // Naviga alla pagina prenotazioni e scarica CSV
-    console.log('Smoobu: scarico lista prenotazioni...');
-
-    // Usa l'API interna di Smoobu per ottenere le prenotazioni in JSON
-    const oggi = new Date().toISOString().slice(0, 10);
-    const tra60 = new Date(); tra60.setDate(tra60.getDate() + 60);
-    const fineStr = tra60.toISOString().slice(0, 10);
-
-    // Chiama l'API Smoobu autenticata tramite cookie di sessione
-    const cookies = await page.cookies();
-    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-
-    const apiRes = await page.evaluate(async (da, a) => {
-      try {
-        const r = await fetch(`/api/reservations?pageSize=100&arrivalFrom=${da}&arrivalTo=${a}`, {
-          headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
-        });
-        if (r.ok) return await r.json();
-        // Prova endpoint alternativo
-        const r2 = await fetch(`/api/v2/reservations?pageSize=100&arrivalFrom=${da}&arrivalTo=${a}`, {
-          headers: { 'Accept': 'application/json' }
-        });
-        if (r2.ok) return await r2.json();
-        return null;
-      } catch(e) { return null; }
-    }, oggi, fineStr);
-
-    let prenotazioni = [];
-
-    if (apiRes && (apiRes.bookings || apiRes.data || Array.isArray(apiRes))) {
-      // Formato API JSON
-      const bookings = apiRes.bookings || apiRes.data || apiRes;
-      console.log(`Smoobu API: ${bookings.length} prenotazioni trovate`);
-      prenotazioni = bookings.map(b => ({
-        appartamento: b.apartment?.name || b.property?.name || b.apartmentName || '',
-        check_in: b.arrival || b.checkIn || b.arrivalDate || '',
-        check_out: b.departure || b.checkOut || b.departureDate || '',
-        num_ospiti: (parseInt(b.adults) || 0) + (parseInt(b.children) || 0) || 1,
-        note: b.guestNote || b.assistantNote || null,
-        portale: b.channel?.name || b.portal || null
-      })).filter(p => p.appartamento && p.check_in && p.check_out);
-    } else {
-      // Fallback: scarica CSV dalla UI
-      console.log('Smoobu: API JSON non disponibile, uso export CSV...');
-      await page.goto('https://login.smoobu.com/it/booking', { waitUntil: 'networkidle2', timeout: 30000 });
-
-      // Imposta range date
-      const client = await page.createCDPSession();
-      await client.send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: '/tmp' });
-
-      // Clicca Esporta → CSV
-      await page.waitForSelector('button', { timeout: 5000 }).catch(() => {});
-      const buttons = await page.$$('button');
-      for (const btn of buttons) {
-        const txt = await btn.evaluate(el => el.textContent.trim());
-        if (txt.includes('Esporta') || txt.includes('Export')) {
-          await btn.click();
-          await new Promise(r => setTimeout(r, 500));
-          break;
-        }
+      if (!res.ok) {
+        risultati.errori.push(`Errore API Smoobu: ${res.status}`);
+        break;
       }
 
-      // Clicca .csv
-      const csvLinks = await page.$$('text=.csv, [data-format="csv"]');
-      if (csvLinks.length > 0) {
-        await csvLinks[0].click();
-        await new Promise(r => setTimeout(r, 3000));
-      }
+      const data = await res.json();
+      console.log(`Smoobu: risposta keys: ${Object.keys(data).join(', ')}`);
 
-      // Leggi il CSV scaricato
-      const fs = require('fs');
-      const files = fs.readdirSync('/tmp').filter(f => f.endsWith('.csv')).sort();
-      if (files.length > 0) {
-        const csvContent = fs.readFileSync(`/tmp/${files[files.length-1]}`, 'utf-8');
-        const lines = csvContent.split('\n').filter(l => l.trim());
-        const headers = lines[0].replace(/^\uFEFF/, '').split(';').map(h => h.replace(/"/g, '').trim());
-        const idxOf = (name) => headers.findIndex(h => h.toLowerCase().includes(name.toLowerCase()));
-        const iApp = idxOf('Proprietà') !== -1 ? idxOf('Proprietà') : idxOf('Propr');
-        const iArrivo = idxOf('Arrivo'), iPartenza = idxOf('Partenza');
-        const iAdulti = idxOf('Adulti'), iBambini = idxOf('Bambini');
-        const iNote = idxOf('Note assistente') !== -1 ? idxOf('Note assistente') : idxOf('Note');
-        const iPortale = idxOf('Portale'), iStato = idxOf('stato');
+      const bookings = data.bookings || data.data || (Array.isArray(data) ? data : []);
+      tuttePrenotazioni.push(...bookings);
+      console.log(`Smoobu: pagina ${pagina}, ${bookings.length} prenotazioni`);
 
-        const smoobuDateToISO = (v) => {
-          if (!v) return null;
-          const m = v.trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/);
-          if (m) { const dd=m[1].padStart(2,'0'),mm=m[2].padStart(2,'0'),yy=m[3].length===2?`20${m[3]}`:m[3]; return `${yy}-${mm}-${dd}`; }
-          return null;
-        };
-
-        prenotazioni = lines.slice(1).map(line => {
-          const cols = line.split(';').map(c => c.replace(/"/g, '').trim());
-          if ((cols[iStato]||'').toLowerCase().includes('cancell')) return null;
-          const check_in = smoobuDateToISO(cols[iArrivo]);
-          const check_out = smoobuDateToISO(cols[iPartenza]);
-          if (!cols[iApp] || !check_in || !check_out) return null;
-          return {
-            appartamento: cols[iApp],
-            check_in, check_out,
-            num_ospiti: (parseInt(cols[iAdulti])||0)+(parseInt(cols[iBambini])||0)||1,
-            note: cols[iNote]||null,
-            portale: cols[iPortale]||null
-          };
-        }).filter(Boolean);
-        console.log(`Smoobu CSV: ${prenotazioni.length} prenotazioni`);
-      }
+      if (bookings.length < 100) break;
+      pagina++;
     }
 
-    // Importa le prenotazioni nel DB
-    for (const pren of prenotazioni) {
+    console.log(`Smoobu: ${tuttePrenotazioni.length} prenotazioni totali`);
+
+    for (const b of tuttePrenotazioni) {
       try {
-        let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [pren.appartamento]);
+        const nomeApp = b.apartment?.name || b.property?.name || b.apartmentName || b.unit?.name || '';
+        if (!nomeApp) { risultati.saltate++; continue; }
+
+        const checkIn = b.arrival || b.arrivalDate || b.checkIn || '';
+        const checkOut = b.departure || b.departureDate || b.checkOut || '';
+        if (!checkIn || !checkOut) { risultati.saltate++; continue; }
+
+        const stato = b.status || b.bookingStatus || '';
+        if (stato.toLowerCase().includes('cancel')) { risultati.saltate++; continue; }
+
+        const numOspiti = (parseInt(b.adults) || 0) + (parseInt(b.children) || 0) || 1;
+        const portale = b.channel?.name || b.referrer || null;
+        const note = b.guestNote || b.assistantNote || b.notes || null;
+
+        let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [nomeApp]);
         if (appRes.rows.length === 0) {
-          appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${pren.appartamento}%`]);
+          appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${nomeApp}%`]);
         }
         if (appRes.rows.length === 0) {
           risultati.saltate++;
-          const msg = `Appartamento non trovato: "${pren.appartamento}"`;
+          const msg = `Appartamento non trovato: "${nomeApp}"`;
           if (!risultati.errori.includes(msg)) risultati.errori.push(msg);
           continue;
         }
+
         const appartamento_id = appRes.rows[0].id;
         const esistente = await pool.query(
           'SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3',
-          [appartamento_id, pren.check_in, pren.check_out]
+          [appartamento_id, checkIn, checkOut]
         );
+
         if (esistente.rows.length > 0) {
-          await pool.query('UPDATE prenotazioni SET num_ospiti=$1 WHERE id=$2', [pren.num_ospiti, esistente.rows[0].id]);
+          await pool.query('UPDATE prenotazioni SET num_ospiti=$1 WHERE id=$2', [numOspiti, esistente.rows[0].id]);
           risultati.saltate++;
         } else {
-          const noteFinale = [pren.portale, pren.note].filter(v => v && v.trim()).join(' | ') || null;
+          const noteFinale = [portale, note].filter(v => v && String(v).trim()).join(' | ') || null;
           await pool.query(
             `INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`,
-            [appartamento_id, pren.check_in, pren.check_out, pren.num_ospiti, noteFinale]
+            [appartamento_id, checkIn, checkOut, numOspiti, noteFinale]
           );
           risultati.importate++;
         }
@@ -995,14 +883,11 @@ const syncSmoobu = async () => {
   } catch (err) {
     console.error('Smoobu sync errore:', err.message);
     risultati.errori.push(err.message);
-  } finally {
-    await browser.close();
   }
 
-  // Salva log
-  await pool.query(`CREATE TABLE IF NOT EXISTS sync_log (id SERIAL PRIMARY KEY, fonte VARCHAR(50), importate INT, saltate INT, errori TEXT, eseguito_il TIMESTAMP DEFAULT NOW())`).catch(()=>{});
+  await pool.query(`CREATE TABLE IF NOT EXISTS sync_log (id SERIAL PRIMARY KEY, fonte VARCHAR(50), importate INT, saltate INT, errori TEXT, eseguito_il TIMESTAMP DEFAULT NOW())`).catch(() => {});
   await pool.query(`INSERT INTO sync_log (fonte, importate, saltate, errori) VALUES ($1,$2,$3,$4)`,
-    ['smoobu', risultati.importate, risultati.saltate, JSON.stringify(risultati.errori)]).catch(()=>{});
+    ['smoobu', risultati.importate, risultati.saltate, JSON.stringify(risultati.errori)]).catch(() => {});
 
   console.log(`Smoobu sync: ${risultati.importate} importate, ${risultati.saltate} saltate`);
   return risultati;
