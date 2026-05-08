@@ -506,16 +506,19 @@ app.post(['/api/sync/email/conferma', '/api/sync/email/confirm'], async (req, re
 
   for (const pren of prenotazioni) {
     try {
-      // Match esatto poi parziale
-      let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [pren.appartamento]);
-      if (appRes.rows.length === 0) {
-        appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${pren.appartamento}%`]);
+      // Usa override se presente, altrimenti match automatico
+      let appartamento_id = pren.appartamento_id_override || null;
+      if (!appartamento_id) {
+        let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [pren.appartamento]);
+        if (appRes.rows.length === 0) {
+          appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${pren.appartamento}%`]);
+        }
+        if (appRes.rows.length === 0) {
+          risultati.errori.push(`Appartamento non trovato: "${pren.appartamento}"`);
+          continue;
+        }
+        appartamento_id = appRes.rows[0].id;
       }
-      if (appRes.rows.length === 0) {
-        risultati.errori.push(`Appartamento non trovato: "${pren.appartamento}"`);
-        continue;
-      }
-      const appartamento_id = appRes.rows[0].id;
 
       if (pren.azione === 'cancella') {
         await pool.query(
