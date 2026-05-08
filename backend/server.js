@@ -844,26 +844,29 @@ const fetchSmoobuBookings = async () => {
     if (!res.ok) throw new Error(`Errore API Smoobu: ${res.status}`);
 
     const data = await res.json();
-    // Smoobu usa formato JSON:API — le prenotazioni sono in data.data
-    // ogni elemento ha attributi in data.attributes
     let bookings = [];
     if (data.data && Array.isArray(data.data)) {
-      // Formato JSON:API — normalizza la struttura
-      bookings = data.data.map(item => ({
-        ...item,
-        ...(item.attributes || {}),
-        apartment: item.relationships?.apartment?.data
-          ? { name: item.attributes?.['apartment-name'] || item.attributes?.apartmentName || '' }
-          : { name: item.attributes?.['apartment-name'] || item.attributes?.apartmentName || '' },
-        arrival: item.attributes?.arrival || item.attributes?.['check-in'] || item.attributes?.checkIn || '',
-        departure: item.attributes?.departure || item.attributes?.['check-out'] || item.attributes?.checkOut || '',
-        adults: item.attributes?.adults || item.attributes?.['number-of-adults'] || 0,
-        children: item.attributes?.children || item.attributes?.['number-of-children'] || 0,
-        status: item.attributes?.status || '',
-      }));
-      // Log per debug
-      if (bookings.length > 0) console.log('Smoobu sample booking keys:', Object.keys(bookings[0]).join(', '));
-      if (bookings.length > 0 && data.data[0]?.attributes) console.log('Smoobu sample attributes:', Object.keys(data.data[0].attributes).join(', '));
+      bookings = data.data.map(item => {
+        const attr = item.attributes || {};
+        // Trova nome appartamento da relationships
+        const aptName = item.apartment?.name || attr.apartmentName || '';
+        return {
+          ...item,
+          arrival: attr.arrivalDate || '',
+          departure: attr.departureDate || '',
+          adults: attr.numberOfGuests || attr.guestCount || 0,
+          children: 0,
+          status: attr.status || '',
+          apartment: { name: aptName },
+          guestNote: attr.guestNote || null,
+          notes: null,
+        };
+      });
+      if (bookings.length > 0) {
+        const apt = data.data[0]?.apartment;
+        console.log('Smoobu sample apartment:', JSON.stringify(apt));
+        console.log('Smoobu sample arrival:', data.data[0]?.attributes?.arrivalDate, 'departure:', data.data[0]?.attributes?.departureDate, 'guests:', data.data[0]?.attributes?.numberOfGuests, 'status:', data.data[0]?.attributes?.status);
+      }
     } else {
       bookings = data.bookings || (Array.isArray(data) ? data : []);
     }
