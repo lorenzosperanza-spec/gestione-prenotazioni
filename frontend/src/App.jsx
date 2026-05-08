@@ -567,6 +567,82 @@ function ImportItalianWay({ appartamenti, onImport }) {
 
   const matchApp = (nome) => appartamenti.find(a => a.nome.toLowerCase() === nome.toLowerCase() || nome.toLowerCase().includes(a.nome.toLowerCase()) || a.nome.toLowerCase().includes(nome.toLowerCase()))
 
+  // ---- SMOOBU CSV ----
+  const [smoobuFile, setSmoobuFile] = useState(null)
+  const [smoobuAnteprima, setSmoobuAnteprima] = useState([])
+  const [smoobuLoading, setSmoobuLoading] = useState(false)
+  const [smoobuRisultato, setSmoobuRisultato] = useState(null)
+  const [smoobuErrore, setSmoobuErrore] = useState('')
+
+  const smoobuDateToISO = (v) => {
+    if (!v) return null
+    const m = v.trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/)
+    if (m) {
+      const dd = m[1].padStart(2, '0'), mm = m[2].padStart(2, '0')
+      const yy = m[3].length === 2 ? `20${m[3]}` : m[3]
+      return `${yy}-${mm}-${dd}`
+    }
+    return null
+  }
+
+  const leggiSmoobuCSV = (f) => {
+    setSmoobuErrore(''); setSmoobuRisultato(null); setSmoobuAnteprima([])
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      try {
+        const text = e.target.result
+        const lines = text.split('\n').filter(l => l.trim())
+        if (lines.length < 2) { setSmoobuErrore('File vuoto'); return }
+        const headers = lines[0].replace(/^\uFEFF/, '').split(';').map(h => h.replace(/"/g, '').trim())
+        const idxOf = (name) => headers.findIndex(h => h.toLowerCase().includes(name.toLowerCase()))
+        const iApp = idxOf('Proprietà') !== -1 ? idxOf('Proprietà') : idxOf('Propr')
+        const iArrivo = idxOf('Arrivo')
+        const iPartenza = idxOf('Partenza')
+        const iAdulti = idxOf('Adulti')
+        const iBambini = idxOf('Bambini')
+        const iNote = idxOf('Note assistente') !== -1 ? idxOf('Note assistente') : idxOf('Note')
+        const iPortale = idxOf('Portale')
+        const iStato = idxOf('stato')
+
+        const righe = lines.slice(1).map(line => {
+          const cols = line.split(';').map(c => c.replace(/"/g, '').trim())
+          if ((cols[iStato] || '').toLowerCase().includes('cancell')) return null
+          const appartamento = cols[iApp] || ''
+          const check_in = smoobuDateToISO(cols[iArrivo])
+          const check_out = smoobuDateToISO(cols[iPartenza])
+          if (!appartamento || !check_in || !check_out) return null
+          const adulti = parseInt(cols[iAdulti]) || 0
+          const bambini = parseInt(cols[iBambini]) || 0
+          return {
+            appartamento, check_in, check_out,
+            num_ospiti: adulti + bambini || 1,
+            portale: cols[iPortale] || '',
+            note: cols[iNote] || ''
+          }
+        }).filter(Boolean)
+        setSmoobuAnteprima(righe)
+      } catch (err) { setSmoobuErrore('Errore lettura: ' + err.message) }
+    }
+    reader.readAsText(f, 'utf-8')
+  }
+
+  const handleSmoobuFile = (e) => { const f = e.target.files[0]; if (f) { setSmoobuFile(f); leggiSmoobuCSV(f) } }
+
+  const importaSmoobu = async () => {
+    if (!smoobuAnteprima.length) return
+    setSmoobuLoading(true); setSmoobuRisultato(null)
+    try {
+      const res = await fetch(`${API_URL}/import/smoobu`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ righe: smoobuAnteprima })
+      })
+      const data = await res.json()
+      setSmoobuRisultato(data)
+      if (data.importate > 0) setTimeout(() => onImport(), 1500)
+    } catch { setSmoobuRisultato({ importate: 0, saltate: 0, errori: ['Errore di connessione'] }) }
+    finally { setSmoobuLoading(false) }
+  }
+
   const excelDateToISO = (v) => {
     if (!v) return null
     if (typeof v === 'string' && v.match(/^\d{4}-\d{2}-\d{2}/)) return v.slice(0, 10)
@@ -706,6 +782,117 @@ function ImportItalianWay({ appartamenti, onImport }) {
             }
           </div>
         )}
+      </div>
+
+      {/* SMOOBU CSV */}
+      <div className="sync-panel" style={{ marginTop: '16px' }}>
+        <div className="sync-panel-header">
+          <div>
+            <h3>🏠 Sync da Smoobu</h3>
+            <p className="sync-desc">Sincronizza automaticamente da Smoobu. Attivo ogni giorno alle 04:00 e 09:00.</p>
+          </div>
+          <button className="btn-sync" onClick={async () => {
+            setSmoobuLoading(true); setSmoobuRisultato(null);
+            try {
+              const res = await fetch(`${API_URL}/sync/smoobu`, { method: 'POST' });
+              const data = await res.json();
+              setSmoobuRisultato(data);
+              if (data.importate > 0) setTimeout(() => onImport(), 1500);
+            } catch (err) { setSmoobuRisultato({ errori: ['Errore connessione'] }); }
+            finally { setSmoobuLoading(false); }
+          }} disabled={smoobuLoading}>
+            {smoobuLoading ? '⏳ Sync Smoobu...' : '🏠 Sync Smoobu ora'}
+          </button>
+        </div>
+        {smoobuLoading && <div className="sync-loading"><div className="sync-spinner" />Connessione a Smoobu in corso... 30-60 secondi</div>}
+        {smoobuRisultato && !smoobuLoading && (
+          <div className={`import-result ${smoobuRisultato.errori?.length && !smoobuRisultato.importate ? 'result-warn' : 'result-ok'}`} style={{ marginTop: '12px' }}>
+            <div className="result-row">✅ Importate: <strong>{smoobuRisultato.importate || 0}</strong></div>
+            <div className="result-row">⏭ Saltate: <strong>{smoobuRisultato.saltate || 0}</strong></div>
+            {smoobuRisultato.errori?.length > 0 && (
+              <div className="result-errors"><strong>Dettagli:</strong><ul>{smoobuRisultato.errori.map((e, i) => <li key={i}>{e}</li>)}</ul></div>
+            )}
+          </div>
+        )}
+
+        <div style={{ borderTop: '1px solid #e5e7eb', margin: '16px 0' }} />
+        <p className="sync-desc" style={{ marginBottom: '8px' }}>Oppure importa manualmente un CSV esportato da Smoobu → Prenotazioni → Esporta → .csv</p>
+        <div
+          className={`drop-zone ${smoobuFile ? 'has-file' : ''}`}
+          onDragOver={e => e.preventDefault()}
+          onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) { setSmoobuFile(f); leggiSmoobuCSV(f) } }}
+          onClick={() => document.getElementById('smoobu-csv-input').click()}
+        >
+          <input id="smoobu-csv-input" type="file" accept=".csv" style={{ display: 'none' }} onChange={handleSmoobuFile} />
+          {smoobuFile ? (
+            <div className="drop-zone-ok">
+              <span className="drop-icon">✅</span>
+              <span>{smoobuFile.name}</span>
+              <span className="drop-sub">{smoobuAnteprima.length} prenotazioni trovate — clicca per cambiare file</span>
+            </div>
+          ) : (
+            <div className="drop-zone-empty">
+              <span className="drop-icon">📂</span>
+              <span>Trascina il file .csv Smoobu qui oppure clicca per selezionarlo</span>
+            </div>
+          )}
+        </div>
+        {smoobuErrore && <div className="error-message">{smoobuErrore}</div>}
+        {smoobuAnteprima.length > 0 && !smoobuRisultato && (
+          <div className="import-preview" style={{ marginTop: '12px' }}>
+            <h4>Anteprima ({smoobuAnteprima.length} prenotazioni)</h4>
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr><th>Appartamento</th><th>Match DB</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Portale</th></tr>
+                </thead>
+                <tbody>
+                  {smoobuAnteprima.map((r, i) => {
+                    const match = matchApp(r.appartamento)
+                    return (
+                      <tr key={i}>
+                        <td><strong>{r.appartamento}</strong></td>
+                        <td>{match ? <span className="match-ok">✅ {match.nome}</span> : <span className="match-ko">⚠️ non trovato</span>}</td>
+                        <td>{r.check_in}</td><td>{r.check_out}</td>
+                        <td>{r.num_ospiti}</td>
+                        <td style={{ fontSize: '12px', color: '#777' }}>{r.portale || '—'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {smoobuAnteprima.some(r => !matchApp(r.appartamento)) && (
+              <div className="import-warning">⚠️ Le righe con "non trovato" verranno saltate. Aggiungi gli appartamenti nel gestionale con lo stesso nome di Smoobu.</div>
+            )}
+            <button className="btn-import" onClick={importaSmoobu} disabled={smoobuLoading} style={{ marginTop: '12px' }}>
+              {smoobuLoading ? 'Importazione...' : `⬆ Importa ${smoobuAnteprima.length} prenotazioni Smoobu`}
+            </button>
+          </div>
+        )}
+      </div>
+        <div
+          className={`drop-zone ${smoobuFile ? 'has-file' : ''}`}
+          style={{ marginTop: '12px' }}
+          onDragOver={e => e.preventDefault()}
+          onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) { setSmoobuFile(f); leggiSmoobuCSV(f) } }}
+          onClick={() => document.getElementById('smoobu-csv-input').click()}
+        >
+          <input id="smoobu-csv-input" type="file" accept=".csv" style={{ display: 'none' }} onChange={handleSmoobuFile} />
+          {smoobuFile ? (
+            <div className="drop-zone-ok">
+              <span className="drop-icon">✅</span>
+              <span>{smoobuFile.name}</span>
+              <span className="drop-sub">{smoobuAnteprima.length} prenotazioni trovate — clicca per cambiare file</span>
+            </div>
+          ) : (
+            <div className="drop-zone-empty">
+              <span className="drop-icon">📂</span>
+              <span>Trascina il file .csv Smoobu qui oppure clicca per selezionarlo</span>
+            </div>
+          )}
+        </div>
+        {smoobuErrore && <div className="error-message">{smoobuErrore}</div>}
       </div>
 
       <div className="import-divider">oppure importa manualmente da Excel</div>
