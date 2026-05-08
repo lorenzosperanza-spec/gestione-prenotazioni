@@ -1028,46 +1028,53 @@ const fetchSmoobuBookings = async () => {
     const data = await res.json();
     let bookings = [];
     if (data.data && Array.isArray(data.data)) {
-      // Costruisce mappa ID appartamento → nome dagli included
+      // Costruisce mappa ID property → nome dagli included
       const aptMap = {};
       if (data.included) {
         for (const inc of data.included) {
-          if (inc.type === 'apartment' || inc.type === 'apartments') {
-            aptMap[inc.id] = inc.attributes?.name || inc.attributes?.title || '';
-          }
+          aptMap[inc.id] = inc.attributes?.name || inc.attributes?.title || '';
         }
       }
-      console.log('Smoobu aptMap:', JSON.stringify(aptMap));
+      // Se aptMap è vuoto, carica le properties separatamente
+      if (Object.keys(aptMap).length === 0) {
+        try {
+          const propRes = await fetch('https://login.smoobu.com/api/v2/users/1683032/properties?page[size]=100', { headers });
+          if (propRes.ok) {
+            const propData = await propRes.json();
+            const props = propData.data || propData.properties || [];
+            for (const p of props) {
+              const pid = p.id;
+              const pname = p.attributes?.name || p.name || '';
+              if (pid && pname) aptMap[pid] = pname;
+            }
+            console.log('Smoobu properties:', JSON.stringify(aptMap));
+          }
+        } catch (e) { console.log('Smoobu properties errore:', e.message); }
+      }
 
       bookings = data.data.map(item => {
         const attr = item.attributes || {};
-        // Prende ID appartamento dalle relationships
-        const aptId = item.relationships?.apartment?.data?.id;
-        const aptName = aptMap[aptId] || attr.apartmentName || attr['apartment-name'] || '';
-        // Date: rimuove timezone e prende solo YYYY-MM-DD
+        // Il nome appartamento è in relationships.property (non apartment!)
+        const propId = item.relationships?.property?.data?.id;
+        const aptName = aptMap[propId] || attr.apartmentName || attr['apartment-name'] || '';
         const arrival = (attr.arrivalDate || '').slice(0, 10);
         const departure = (attr.departureDate || '').slice(0, 10);
         const numGuests = attr.numberOfGuests || attr.guestCount || attr.adults || 1;
-        // Status: 1=confermata, 0=cancellata
         const stato = attr.status;
         const cancellata = stato === 0 || stato === '0' || String(stato).toLowerCase().includes('cancel');
-
         return {
-          arrival,
-          departure,
+          arrival, departure,
           adults: numGuests,
           children: 0,
           status: cancellata ? 'cancelled' : 'confirmed',
           apartment: { name: aptName },
-          guestNote: attr.guestNote || null,
+          guestNote: attr.guest?.notes || attr.assistantNotes || null,
         };
       });
 
       if (data.data[0]) {
-        console.log('Smoobu raw booking[0]:', JSON.stringify(data.data[0]).slice(0, 1000));
-        const aptId = data.data[0].relationships?.apartment?.data?.id;
-        console.log('Smoobu sample aptId:', aptId, '→ name:', aptMap[aptId]);
-        console.log('Smoobu sample arrival:', data.data[0].attributes?.arrivalDate?.slice(0,10), 'guests:', data.data[0].attributes?.numberOfGuests);
+        const propId = data.data[0].relationships?.property?.data?.id;
+        console.log('Smoobu propId:', propId, '→ name:', aptMap[propId]);
       }
     } else {
       bookings = data.bookings || (Array.isArray(data) ? data : []);
