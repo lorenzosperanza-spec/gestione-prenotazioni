@@ -290,7 +290,7 @@ const processaEmailConClaude = async (emailText, mittente, oggetto, tipoAzione) 
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 2000,
+        max_tokens: 8000,
         messages: [{
           role: 'user',
           content: `Sei un assistente che estrae prenotazioni di pulizie da email italiane.
