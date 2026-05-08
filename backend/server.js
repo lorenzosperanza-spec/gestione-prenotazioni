@@ -799,21 +799,54 @@ const syncSmoobu = async () => {
     console.log('Smoobu: login in corso...');
     await page.goto('https://login.smoobu.com/en/login', { waitUntil: 'networkidle2', timeout: 30000 });
 
-    // Compila email e password
-    await page.waitForSelector('input[type="email"], input[name="email"], input[type="text"]', { timeout: 10000 });
-    const emailInput = await page.$('input[type="email"]') || await page.$('input[name="email"]') || await page.$('input[type="text"]');
-    const passInput = await page.$('input[type="password"]');
-    if (!emailInput || !passInput) throw new Error('Campi login non trovati');
+    // Aspetta che il form sia visibile
+    await page.waitForSelector('input', { timeout: 10000 });
+    await new Promise(r => setTimeout(r, 2000));
 
-    await emailInput.click({ clickCount: 3 });
-    await emailInput.type(email);
-    await passInput.click({ clickCount: 3 });
-    await passInput.type(password);
+    // Debug: logga tutti gli input trovati
+    const inputsInfo = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('input')).map(i => ({
+        type: i.type, name: i.name, id: i.id, placeholder: i.placeholder, autocomplete: i.autocomplete
+      }));
+    });
+    console.log('Smoobu inputs trovati:', JSON.stringify(inputsInfo));
 
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
-      page.click('button[type="submit"], input[type="submit"], button:not([type])')
-    ]);
+    // Compila via JavaScript direttamente nel DOM (più affidabile con SPA React)
+    await page.evaluate((em, pw) => {
+      const inputs = Array.from(document.querySelectorAll('input'));
+      const emailInput = inputs.find(i => i.type === 'email' || i.name === 'email' || i.autocomplete === 'email' || (i.type !== 'password' && i.type !== 'hidden' && i.type !== 'checkbox' && i.type !== 'submit'));
+      const passInput = inputs.find(i => i.type === 'password');
+      if (emailInput) {
+        emailInput.focus();
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        nativeInputValueSetter.call(emailInput, em);
+        emailInput.dispatchEvent(new Event('input', { bubbles: true }));
+        emailInput.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      if (passInput) {
+        passInput.focus();
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        nativeInputValueSetter.call(passInput, pw);
+        passInput.dispatchEvent(new Event('input', { bubbles: true }));
+        passInput.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }, email, password);
+
+    await new Promise(r => setTimeout(r, 1000));
+    console.log('Smoobu: credenziali inserite via JS, invio form...');
+
+    // Submit — prova tutti i metodi
+    const submitted = await page.evaluate(() => {
+      const btn = document.querySelector('button[type="submit"]') || document.querySelector('button:not([type])') || document.querySelector('input[type="submit"]');
+      if (btn) { btn.click(); return true; }
+      const form = document.querySelector('form');
+      if (form) { form.submit(); return true; }
+      return false;
+    });
+    console.log('Smoobu: submit eseguito:', submitted);
+
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+    await new Promise(r => setTimeout(r, 2000));
 
     const currentUrl = page.url();
     console.log('Smoobu: dopo login URL:', currentUrl);
