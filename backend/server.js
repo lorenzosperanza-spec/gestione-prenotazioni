@@ -1229,6 +1229,31 @@ const syncSmoobu = async (soloIds) => {
 app.post('/api/sync/smoobu', async (req, res) => {
   try {
     console.log('Sync Smoobu avviato manualmente');
+    // Se passate prenotazioni specifiche, importa quelle
+    if (req.body?.prenotazioni) {
+      const risultati = { importate: 0, saltate: 0, errori: [] };
+      for (const pren of req.body.prenotazioni) {
+        try {
+          let appId = pren.appartamento_id;
+          if (!appId) {
+            const nomeApp = pren.nome_smoobu || pren.appartamento || '';
+            let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [nomeApp]);
+            if (appRes.rows.length === 0) appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${nomeApp}%`]);
+            if (appRes.rows.length === 0) { risultati.errori.push(`Non trovato: "${nomeApp}"`); risultati.saltate++; continue; }
+            appId = appRes.rows[0].id;
+          }
+          const esistente = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appId, pren.check_in, pren.check_out]);
+          if (esistente.rows.length > 0) { risultati.saltate++; continue; }
+          await pool.query(
+            `INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`,
+            [appId, pren.check_in, pren.check_out, pren.num_ospiti || 1, pren.portale || null]
+          );
+          risultati.importate++;
+        } catch (err) { risultati.errori.push(err.message); }
+      }
+      return res.json(risultati);
+    }
+    // Altrimenti sync automatico completo
     const risultati = await syncSmoobu();
     res.json(risultati);
   } catch (err) { res.status(500).json({ error: err.message }); }
