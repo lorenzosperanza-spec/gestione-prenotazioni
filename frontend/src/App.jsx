@@ -755,7 +755,7 @@ function ImportItalianWay({ appartamenti, onImport }) {
                       <input type="checkbox" checked={Object.values(selezionate).every(v => v)}
                         onChange={e => { const sel = {}; anteprimaEmail.prenotazioni.forEach((_, i) => { sel[i] = e.target.checked }); setSelezionate(sel) }} />
                     </th>
-                    <th>Appartamento</th><th>Match DB</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Azione</th>
+                    <th>Appartamento</th><th>Match DB</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Note</th><th>Azione</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -781,6 +781,7 @@ function ImportItalianWay({ appartamenti, onImport }) {
                         <td>{fmtData(p.check_in)}</td>
                         <td>{fmtData(p.check_out)}</td>
                         <td>{p.ospiti || '—'}</td>
+                        <td style={{ fontSize: '12px', color: '#555', maxWidth: '150px' }}>{p.note || '—'}</td>
                         <td><span className={`azione-badge ${p.azione === 'cancella' ? 'azione-cancella' : 'azione-nuova'}`}>{p.azione === 'cancella' ? '🗑 Cancella' : '✅ Nuova'}</span></td>
                       </tr>
                     )
