@@ -573,6 +573,7 @@ function ImportItalianWay({ appartamenti, onImport }) {
   const [smoobuLoading, setSmoobuLoading] = useState(false)
   const [smoobuRisultato, setSmoobuRisultato] = useState(null)
   const [smoobuErrore, setSmoobuErrore] = useState('')
+  const [smoobuMappingTemp, setSmoobuMappingTemp] = useState({})
 
   const smoobuDateToISO = (v) => {
     if (!v) return null
@@ -792,20 +793,117 @@ function ImportItalianWay({ appartamenti, onImport }) {
             <p className="sync-desc">Sincronizza automaticamente da Smoobu. Attivo ogni giorno alle 04:00 e 09:00.</p>
           </div>
           <button className="btn-sync" onClick={async () => {
-            setSmoobuLoading(true); setSmoobuRisultato(null);
+            setSmoobuLoading(true); setSmoobuRisultato(null); setSmoobuAnteprima([]);
             try {
-              const res = await fetch(`${API_URL}/sync/smoobu`, { method: 'POST' });
+              const res = await fetch(`${API_URL}/sync/smoobu/anteprima`, { method: 'POST' });
               const data = await res.json();
-              setSmoobuRisultato(data);
-              if (data.importate > 0) setTimeout(() => onImport(), 1500);
+              if (data.errore) { setSmoobuRisultato({ errori: [data.errore] }); }
+              else {
+                // Inizializza mapping per appartamenti non trovati
+                const mappingInit = {};
+                data.prenotazioni.forEach(p => { if (!p.mappato) mappingInit[p.nome_smoobu] = ''; });
+                setSmoobuMappingTemp(mappingInit);
+                setSmoobuAnteprima(data.prenotazioni || []);
+              }
             } catch (err) { setSmoobuRisultato({ errori: ['Errore connessione'] }); }
             finally { setSmoobuLoading(false); }
           }} disabled={smoobuLoading}>
-            {smoobuLoading ? '⏳ Sync Smoobu...' : '🏠 Sync Smoobu ora'}
+            {smoobuLoading ? '⏳ Caricamento...' : '🏠 Leggi prenotazioni Smoobu'}
           </button>
         </div>
-        {smoobuLoading && <div className="sync-loading"><div className="sync-spinner" />Connessione a Smoobu in corso... 30-60 secondi</div>}
-        {smoobuRisultato && !smoobuLoading && (
+        {smoobuLoading && <div className="sync-loading"><div className="sync-spinner" />Connessione a Smoobu in corso...</div>}
+
+        {/* ANTEPRIMA SMOOBU */}
+        {smoobuAnteprima.length > 0 && !smoobuRisultato && (
+          <div style={{ marginTop: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h4 style={{ margin: 0, color: '#2d5a3d' }}>
+                📋 Anteprima — {smoobuAnteprima.length} prenotazioni trovate
+              </h4>
+            </div>
+
+            {/* Mapping appartamenti non trovati */}
+            {smoobuAnteprima.some(p => !p.mappato) && (
+              <div className="import-warning" style={{ marginBottom: '12px' }}>
+                <strong>⚠️ Associa gli appartamenti Smoobu al gestionale:</strong>
+                {[...new Set(smoobuAnteprima.filter(p => !p.mappato).map(p => p.nome_smoobu))].map(nome => (
+                  <div key={nome} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
+                    <span style={{ minWidth: '200px', fontWeight: 'bold', fontSize: '13px' }}>"{nome}"</span>
+                    <span>→</span>
+                    <select
+                      className="edit-input"
+                      style={{ flex: 1 }}
+                      value={smoobuMappingTemp[nome] || ''}
+                      onChange={e => setSmoobuMappingTemp(prev => ({ ...prev, [nome]: e.target.value }))}
+                    >
+                      <option value="">Seleziona appartamento...</option>
+                      {appartamenti.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr><th>Appartamento Smoobu</th><th>Match DB</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Portale</th><th>Stato</th></tr>
+                </thead>
+                <tbody>
+                  {smoobuAnteprima.map((p, i) => (
+                    <tr key={i} style={{ opacity: p.esistente ? 0.5 : 1 }}>
+                      <td><strong>{p.nome_smoobu}</strong></td>
+                      <td>
+                        {p.appartamento_nome
+                          ? <span className="match-ok">✅ {p.appartamento_nome}</span>
+                          : smoobuMappingTemp[p.nome_smoobu]
+                          ? <span className="match-ok">🔗 {appartamenti.find(a => String(a.id) === String(smoobuMappingTemp[p.nome_smoobu]))?.nome}</span>
+                          : <span className="match-ko">⚠️ non mappato</span>
+                        }
+                      </td>
+                      <td>{p.check_in}</td>
+                      <td>{p.check_out}</td>
+                      <td>{p.num_ospiti}</td>
+                      <td style={{ fontSize: '12px', color: '#777' }}>{p.portale || '—'}</td>
+                      <td>{p.esistente ? <span style={{ color: '#777', fontSize: '12px' }}>già presente</span> : <span style={{ color: '#16a34a', fontSize: '12px' }}>da importare</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
+              <button className="btn-import" disabled={smoobuLoading} onClick={async () => {
+                setSmoobuLoading(true);
+                // Salva mapping prima
+                for (const [nomeSmoobu, appId] of Object.entries(smoobuMappingTemp)) {
+                  if (appId) {
+                    await fetch(`${API_URL}/smoobu/mapping`, {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ nome_smoobu: nomeSmoobu, appartamento_id: parseInt(appId) })
+                    }).catch(() => {});
+                  }
+                }
+                // Poi importa
+                try {
+                  const res = await fetch(`${API_URL}/sync/smoobu`, { method: 'POST' });
+                  const data = await res.json();
+                  setSmoobuRisultato(data);
+                  setSmoobuAnteprima([]);
+                  if (data.importate > 0) setTimeout(() => onImport(), 1500);
+                } catch { setSmoobuRisultato({ errori: ['Errore connessione'] }); }
+                finally { setSmoobuLoading(false); }
+              }}>
+                {smoobuLoading ? '⏳ Importazione...' : `✅ Importa prenotazioni Smoobu`}
+              </button>
+              <button className="btn-icon btn-cancel-icon" onClick={() => setSmoobuAnteprima([])} style={{ padding: '10px 16px' }}>
+                ✕ Annulla
+              </button>
+            </div>
+          </div>
+        )}
+
+        {smoobuRisultato && !smoobuAnteprima.length && (
           <div className={`import-result ${smoobuRisultato.errori?.length && !smoobuRisultato.importate ? 'result-warn' : 'result-ok'}`} style={{ marginTop: '12px' }}>
             <div className="result-row">✅ Importate: <strong>{smoobuRisultato.importate || 0}</strong></div>
             <div className="result-row">⏭ Saltate: <strong>{smoobuRisultato.saltate || 0}</strong></div>
@@ -838,38 +936,6 @@ function ImportItalianWay({ appartamenti, onImport }) {
           )}
         </div>
         {smoobuErrore && <div className="error-message">{smoobuErrore}</div>}
-        {smoobuAnteprima.length > 0 && !smoobuRisultato && (
-          <div className="import-preview" style={{ marginTop: '12px' }}>
-            <h4>Anteprima ({smoobuAnteprima.length} prenotazioni)</h4>
-            <div className="table-container">
-              <table>
-                <thead>
-                  <tr><th>Appartamento</th><th>Match DB</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Portale</th></tr>
-                </thead>
-                <tbody>
-                  {smoobuAnteprima.map((r, i) => {
-                    const match = matchApp(r.appartamento)
-                    return (
-                      <tr key={i}>
-                        <td><strong>{r.appartamento}</strong></td>
-                        <td>{match ? <span className="match-ok">✅ {match.nome}</span> : <span className="match-ko">⚠️ non trovato</span>}</td>
-                        <td>{r.check_in}</td><td>{r.check_out}</td>
-                        <td>{r.num_ospiti}</td>
-                        <td style={{ fontSize: '12px', color: '#777' }}>{r.portale || '—'}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {smoobuAnteprima.some(r => !matchApp(r.appartamento)) && (
-              <div className="import-warning">⚠️ Le righe con "non trovato" verranno saltate. Aggiungi gli appartamenti nel gestionale con lo stesso nome di Smoobu.</div>
-            )}
-            <button className="btn-import" onClick={importaSmoobu} disabled={smoobuLoading} style={{ marginTop: '12px' }}>
-              {smoobuLoading ? 'Importazione...' : `⬆ Importa ${smoobuAnteprima.length} prenotazioni Smoobu`}
-            </button>
-          </div>
-        )}
       </div>
 
       <div className="import-divider">oppure importa manualmente da Excel</div>
