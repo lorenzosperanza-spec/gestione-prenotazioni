@@ -846,26 +846,45 @@ const fetchSmoobuBookings = async () => {
     const data = await res.json();
     let bookings = [];
     if (data.data && Array.isArray(data.data)) {
+      // Costruisce mappa ID appartamento → nome dagli included
+      const aptMap = {};
+      if (data.included) {
+        for (const inc of data.included) {
+          if (inc.type === 'apartment' || inc.type === 'apartments') {
+            aptMap[inc.id] = inc.attributes?.name || inc.attributes?.title || '';
+          }
+        }
+      }
+      console.log('Smoobu aptMap:', JSON.stringify(aptMap));
+
       bookings = data.data.map(item => {
         const attr = item.attributes || {};
-        // Trova nome appartamento da relationships
-        const aptName = item.apartment?.name || attr.apartmentName || '';
+        // Prende ID appartamento dalle relationships
+        const aptId = item.relationships?.apartment?.data?.id;
+        const aptName = aptMap[aptId] || attr.apartmentName || attr['apartment-name'] || '';
+        // Date: rimuove timezone e prende solo YYYY-MM-DD
+        const arrival = (attr.arrivalDate || '').slice(0, 10);
+        const departure = (attr.departureDate || '').slice(0, 10);
+        const numGuests = attr.numberOfGuests || attr.guestCount || attr.adults || 1;
+        // Status: 1=confermata, 0=cancellata
+        const stato = attr.status;
+        const cancellata = stato === 0 || stato === '0' || String(stato).toLowerCase().includes('cancel');
+
         return {
-          ...item,
-          arrival: attr.arrivalDate || '',
-          departure: attr.departureDate || '',
-          adults: attr.numberOfGuests || attr.guestCount || 0,
+          arrival,
+          departure,
+          adults: numGuests,
           children: 0,
-          status: attr.status || '',
+          status: cancellata ? 'cancelled' : 'confirmed',
           apartment: { name: aptName },
           guestNote: attr.guestNote || null,
-          notes: null,
         };
       });
-      if (bookings.length > 0) {
-        const apt = data.data[0]?.apartment;
-        console.log('Smoobu sample apartment:', JSON.stringify(apt));
-        console.log('Smoobu sample arrival:', data.data[0]?.attributes?.arrivalDate, 'departure:', data.data[0]?.attributes?.departureDate, 'guests:', data.data[0]?.attributes?.numberOfGuests, 'status:', data.data[0]?.attributes?.status);
+
+      if (data.data[0]) {
+        const aptId = data.data[0].relationships?.apartment?.data?.id;
+        console.log('Smoobu sample aptId:', aptId, '→ name:', aptMap[aptId]);
+        console.log('Smoobu sample arrival:', data.data[0].attributes?.arrivalDate?.slice(0,10), 'guests:', data.data[0].attributes?.numberOfGuests);
       }
     } else {
       bookings = data.bookings || (Array.isArray(data) ? data : []);
