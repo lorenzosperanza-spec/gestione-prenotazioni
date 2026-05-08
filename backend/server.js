@@ -1064,6 +1064,7 @@ const fetchSmoobuBookings = async () => {
       });
 
       if (data.data[0]) {
+        console.log('Smoobu raw booking[0]:', JSON.stringify(data.data[0]).slice(0, 1000));
         const aptId = data.data[0].relationships?.apartment?.data?.id;
         console.log('Smoobu sample aptId:', aptId, '→ name:', aptMap[aptId]);
         console.log('Smoobu sample arrival:', data.data[0].attributes?.arrivalDate?.slice(0,10), 'guests:', data.data[0].attributes?.numberOfGuests);
