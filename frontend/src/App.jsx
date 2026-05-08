@@ -586,6 +586,15 @@ function ImportItalianWay({ appartamenti, onImport }) {
   const [smoobuErrore, setSmoobuErrore] = useState('')
   const [smoobuMappingTemp, setSmoobuMappingTemp] = useState({})
 
+  // Stati Google Sheet
+  const [sheetLoading, setSheetLoading] = useState(false)
+  const [sheetAnteprima, setSheetAnteprima] = useState(null)
+  const [sheetRisultato, setSheetRisultato] = useState(null)
+  const [sheetTabs, setSheetTabs] = useState([])
+  const [sheetTabSelezionato, setSheetTabSelezionato] = useState('')
+  const [sheetSelezione, setSheetSelezione] = useState({})
+  const [sheetMatchOverride, setSheetMatchOverride] = useState({})
+
   const smoobuDateToISO = (v) => {
     if (!v) return null
     const m = v.trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/)
@@ -722,6 +731,145 @@ function ImportItalianWay({ appartamenti, onImport }) {
         {syncLog.length > 0 && (
           <div className="sync-log"><strong>Ultimi sync:</strong>
             {syncLog.map((s, i) => <div key={i} className="sync-log-row"><span className="sync-log-date">{new Date(s.eseguito_il).toLocaleString('it-IT')}</span><span className="sync-log-ok">✅ {s.importate} importate</span><span className="sync-log-skip">⏭ {s.saltate} saltate</span></div>)}
+          </div>
+        )}
+      </div>
+
+      {/* SYNC GOOGLE SHEET */}
+      <div className="sync-panel" style={{ marginTop: '16px' }}>
+        <div className="sync-panel-header">
+          <div>
+            <h3>📊 Sync da Google Sheet</h3>
+            <p className="sync-desc">Legge il calendario pulizie dal foglio condiviso e importa le prenotazioni.</p>
+          </div>
+          <button className="btn-sync" onClick={async () => {
+            setSheetLoading(true); setSheetAnteprima(null); setSheetRisultato(null);
+            try {
+              // Carica lista tab
+              const tabRes = await fetch(`${API_URL}/sync/sheets/tabs`);
+              const tabData = await tabRes.json();
+              if (tabData.errore) { setSheetRisultato({ errore: tabData.errore }); return; }
+              setSheetTabs(tabData.tabs || []);
+              // Legge tab corrente
+              const mesi = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+              const tabCorrente = mesi[new Date().getMonth()];
+              const tabDaLeggere = tabData.tabs.includes(tabCorrente) ? tabCorrente : tabData.tabs[tabData.tabs.length - 1];
+              setSheetTabSelezionato(tabDaLeggere);
+              const res = await fetch(`${API_URL}/sync/sheets/anteprima`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tab: tabDaLeggere })
+              });
+              const data = await res.json();
+              if (data.errore) { setSheetRisultato({ errore: data.errore }); return; }
+              setSheetAnteprima(data);
+              const sel = {};
+              data.prenotazioni.forEach((p, i) => { sel[i] = !p.gia_processato && !p.esistente; });
+              setSheetSelezione(sel);
+            } catch (err) { setSheetRisultato({ errore: 'Errore connessione' }); }
+            finally { setSheetLoading(false); }
+          }} disabled={sheetLoading}>
+            {sheetLoading ? '⏳ Lettura...' : '📊 Leggi Google Sheet'}
+          </button>
+        </div>
+        {sheetLoading && <div className="sync-loading"><div className="sync-spinner" />Lettura foglio in corso...</div>}
+
+        {sheetAnteprima && !sheetLoading && (
+          <div style={{ marginTop: '12px' }}>
+            {/* Selettore tab */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+              <label style={{ fontWeight: 'bold', fontSize: '14px' }}>Tab mese:</label>
+              <select className="edit-input" style={{ width: '160px' }} value={sheetTabSelezionato}
+                onChange={async e => {
+                  const tab = e.target.value; setSheetTabSelezionato(tab); setSheetLoading(true);
+                  try {
+                    const res = await fetch(`${API_URL}/sync/sheets/anteprima`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tab }) });
+                    const data = await res.json();
+                    setSheetAnteprima(data);
+                    const sel = {}; data.prenotazioni.forEach((p, i) => { sel[i] = !p.gia_processato && !p.esistente; }); setSheetSelezione(sel);
+                  } catch {} finally { setSheetLoading(false); }
+                }}>
+                {sheetTabs.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <span style={{ fontSize: '13px', color: '#666' }}>{sheetAnteprima.totale} prenotazioni trovate</span>
+            </div>
+
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{width:'36px'}}>
+                      <input type="checkbox" checked={Object.values(sheetSelezione).every(Boolean)}
+                        onChange={e => { const s = {}; sheetAnteprima.prenotazioni.forEach((_, i) => { s[i] = e.target.checked; }); setSheetSelezione(s); }} />
+                    </th>
+                    <th>Appartamento</th><th>Match DB</th><th>Ospite</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Note</th><th>Stato</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sheetAnteprima.prenotazioni.map((p, i) => (
+                    <tr key={i} style={{ opacity: sheetSelezione[i] ? 1 : 0.45 }}>
+                      <td><input type="checkbox" checked={!!sheetSelezione[i]} onChange={e => setSheetSelezione(prev => ({ ...prev, [i]: e.target.checked }))} /></td>
+                      <td><strong style={{ fontSize: '12px' }}>{p.appartamento}</strong></td>
+                      <td>
+                        <select className="edit-input" style={{ fontSize: '11px', minWidth: '140px' }}
+                          value={sheetMatchOverride[i] || p.appartamento_id || ''}
+                          onChange={e => setSheetMatchOverride(prev => ({ ...prev, [i]: e.target.value }))}>
+                          {!p.appartamento_id && !sheetMatchOverride[i] && <option value="">⚠️ non trovato</option>}
+                          {appartamenti.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
+                        </select>
+                      </td>
+                      <td style={{ fontSize: '12px' }}>{p.nome_ospite || '—'}</td>
+                      <td style={{ fontSize: '12px' }}>{p.check_in}</td>
+                      <td style={{ fontSize: '12px' }}>{p.check_out}</td>
+                      <td>{p.num_ospiti}</td>
+                      <td style={{ fontSize: '11px', color: '#555' }}>{p.note || '—'}</td>
+                      <td style={{ fontSize: '11px' }}>
+                        {p.esistente ? <span style={{ color: '#888' }}>già nel DB</span>
+                          : p.gia_processato ? <span style={{ color: '#f59e0b' }}>già processato</span>
+                          : <span style={{ color: '#16a34a' }}>da importare</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', marginTop: '12px', alignItems: 'center' }}>
+              <button className="btn-import" disabled={sheetLoading || Object.values(sheetSelezione).every(v => !v)}
+                onClick={async () => {
+                  setSheetLoading(true);
+                  const selezionate = sheetAnteprima.prenotazioni
+                    .filter((_, i) => sheetSelezione[i])
+                    .map((p, origIdx) => {
+                      const i = sheetAnteprima.prenotazioni.indexOf(p);
+                      return { ...p, appartamento_id: sheetMatchOverride[i] || p.appartamento_id };
+                    });
+                  try {
+                    const res = await fetch(`${API_URL}/sync/sheets/importa`, {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ prenotazioni: selezionate, marcaProcessato: true })
+                    });
+                    const data = await res.json();
+                    setSheetRisultato(data); setSheetAnteprima(null);
+                    if (data.importate > 0) setTimeout(() => onImport(), 1500);
+                  } catch { setSheetRisultato({ errore: 'Errore connessione' }); }
+                  finally { setSheetLoading(false); }
+                }}>
+                {sheetLoading ? '⏳...' : `✅ Importa (${Object.values(sheetSelezione).filter(Boolean).length})`}
+              </button>
+              <button className="btn-icon btn-cancel-icon" style={{ padding: '10px 16px' }} onClick={() => setSheetAnteprima(null)}>✕ Annulla</button>
+            </div>
+          </div>
+        )}
+
+        {sheetRisultato && !sheetAnteprima && (
+          <div className={`import-result ${sheetRisultato.errore ? 'result-warn' : 'result-ok'}`} style={{ marginTop: '12px' }}>
+            {sheetRisultato.errore
+              ? <div className="result-row">❌ {sheetRisultato.errore}</div>
+              : <><div className="result-row">✅ Importate: <strong>{sheetRisultato.importate}</strong></div>
+                  <div className="result-row">⏭ Saltate: <strong>{sheetRisultato.saltate}</strong></div>
+                  {sheetRisultato.errori?.length > 0 && <div className="result-errors"><ul>{sheetRisultato.errori.map((e,i)=><li key={i}>{e}</li>)}</ul></div>}
+                </>
+            }
           </div>
         )}
       </div>
