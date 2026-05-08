@@ -107,6 +107,7 @@ app.get('/api/prenotazioni', async (req, res) => {
     await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS dipendente_id INTEGER`).catch(() => {});
     await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS stato_pulizia VARCHAR(20) DEFAULT 'da_fare'`).catch(() => {});
     await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS data_pulizia_originale DATE`).catch(() => {});
+    await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) DEFAULT 'prenotazione'`).catch(() => {});
     const result = await pool.query(`
       SELECT p.*, a.nome as appartamento_nome, a.via, a.pulizia, a.biancheria, a.logistica,
              d.nome_cognome as dipendente_nome
@@ -132,11 +133,12 @@ app.get('/api/prenotazioni/data/:data', async (req, res) => {
 
 app.post('/api/prenotazioni', async (req, res) => {
   try {
-    const { appartamento_id, guest_name, check_in, check_out, num_ospiti, note, stato } = req.body;
+    const { appartamento_id, guest_name, check_in, check_out, num_ospiti, note, stato, tipo } = req.body;
+    await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) DEFAULT 'prenotazione'`).catch(() => {});
     const result = await pool.query(
-      `INSERT INTO prenotazioni (appartamento_id, guest_name, check_in, check_out, num_ospiti, note, stato)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [appartamento_id, guest_name || null, check_in, check_out, num_ospiti, note, stato || 'confermata']
+      `INSERT INTO prenotazioni (appartamento_id, guest_name, check_in, check_out, num_ospiti, note, stato, tipo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [appartamento_id, guest_name || null, check_in, check_out, num_ospiti, note, stato || 'confermata', tipo || 'prenotazione']
     );
     res.status(201).json(result.rows[0]);
   } catch (err) { res.status(500).json({ error: 'Errore nella creazione prenotazione' }); }
