@@ -255,7 +255,7 @@ app.get('/auth/google', (req, res) => {
   try {
     const url = getGoogleOAuth2Client().generateAuthUrl({
       access_type: 'offline', prompt: 'consent',
-      scope: ['https://www.googleapis.com/auth/gmail.modify']
+      scope: ['https://www.googleapis.com/auth/gmail.modify', 'https://www.googleapis.com/auth/spreadsheets']
     });
     res.redirect(url);
   } catch (err) { res.status(500).send('Errore: ' + err.message); }
@@ -650,6 +650,183 @@ app.post('/api/import/smoobu', async (req, res) => {
     } catch (err) {
       risultati.errori.push(`Errore su "${r.appartamento}": ${err.message}`);
     }
+  }
+
+  res.json(risultati);
+});
+
+// ============ SYNC GOOGLE SHEET ============
+
+const SHEET_ID = '1nC7Z_WXmhf0dJ5ZnGObKF9MF7esITLNMwAbfJ-El20c';
+
+// Legge il foglio del mese corrente e restituisce le prenotazioni
+const leggiGoogleSheet = async (tabName) => {
+  const oauth2Client = getGoogleOAuth2Client();
+  const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+
+  // Se non specificato, usa il tab del mese corrente in italiano
+  if (!tabName) {
+    const mesi = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+    tabName = mesi[new Date().getMonth()];
+  }
+
+  console.log(`Google Sheet: lettura tab "${tabName}"...`);
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: tabName,
+  });
+
+  const rows = res.data.values || [];
+  console.log(`Google Sheet: ${rows.length} righe trovate`);
+
+  const prenotazioni = [];
+  let appartamentoCorrente = '';
+  const annoCorrente = new Date().getFullYear();
+
+  // Converte data GG/M o GG/MM in YYYY-MM-DD
+  const parseData = (v) => {
+    if (!v) return null;
+    const s = String(v).trim();
+    const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/);
+    if (!m) return null;
+    const dd = m[1].padStart(2, '0');
+    const mm = m[2].padStart(2, '0');
+    const yy = m[3] ? (m[3].length === 2 ? `20${m[3]}` : m[3]) : annoCorrente;
+    return `${yy}-${mm}-${dd}`;
+  };
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length === 0) continue;
+
+    const col1 = String(row[0] || '').trim();
+    const col2 = String(row[1] || '').trim();
+
+    // Riga header appartamento: cella B in maiuscolo e grassetto (es. "VIA MARCHE 72 (PIANO2)")
+    if (col2 && col2 === col2.toUpperCase() && col2.length > 3 &&
+        !col2.includes('/') && isNaN(col2) &&
+        !['CHECK-IN','CHECK-OUT','NUMERO OSPITI','NOTE','PROCESSATO'].includes(col2)) {
+      appartamentoCorrente = col2;
+      continue;
+    }
+
+    // Salta righe header colonne
+    if (col2 === 'CHECK-IN' || col2 === 'check-in') continue;
+
+    // Riga prenotazione: ha check-in e check-out
+    const checkIn = parseData(row[2]);  // colonna C
+    const checkOut = parseData(row[3]); // colonna D
+    if (!appartamentoCorrente || !checkIn || !checkOut) continue;
+
+    const numOspiti = parseInt(row[4]) || 1; // colonna E
+    const note = String(row[5] || '').trim() || null; // colonna F
+    const processato = String(row[6] || '').trim().toLowerCase(); // colonna G
+    const giaProcessato = ['si', 'sì', 'yes', 'true'].includes(processato);
+    const nomeOspite = col2 || null; // colonna B = nome ospite
+    const rowIndex = i + 1; // 1-based per Sheets API
+
+    prenotazioni.push({
+      appartamento: appartamentoCorrente,
+      check_in: checkIn,
+      check_out: checkOut,
+      num_ospiti: numOspiti,
+      note,
+      nome_ospite: nomeOspite,
+      gia_processato: giaProcessato,
+      row_index: rowIndex,
+      tab_name: tabName,
+    });
+  }
+
+  console.log(`Google Sheet: ${prenotazioni.length} prenotazioni estratte`);
+  return { prenotazioni, tabName };
+};
+
+// GET lista tab disponibili
+app.get('/api/sync/sheets/tabs', async (req, res) => {
+  try {
+    const oauth2Client = getGoogleOAuth2Client();
+    const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+    const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
+    const tabs = meta.data.sheets.map(s => s.properties.title);
+    res.json({ tabs });
+  } catch (err) { res.status(500).json({ errore: err.message }); }
+});
+
+// POST anteprima Google Sheet
+app.post('/api/sync/sheets/anteprima', async (req, res) => {
+  try {
+    const { tab } = req.body;
+    const { prenotazioni, tabName } = await leggiGoogleSheet(tab);
+
+    // Controlla match appartamenti nel DB
+    const result = [];
+    for (const p of prenotazioni) {
+      let appRes = await pool.query('SELECT id, nome FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [p.appartamento]);
+      if (appRes.rows.length === 0) appRes = await pool.query('SELECT id, nome FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${p.appartamento}%`]);
+      const appartamento_id = appRes.rows[0]?.id || null;
+      const appartamento_nome_db = appRes.rows[0]?.nome || null;
+
+      let esistente = false;
+      if (appartamento_id) {
+        const dup = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, p.check_in, p.check_out]);
+        esistente = dup.rows.length > 0;
+      }
+
+      result.push({ ...p, appartamento_id, appartamento_nome_db, esistente });
+    }
+
+    res.json({ prenotazioni: result, tabName, totale: result.length });
+  } catch (err) { res.status(500).json({ errore: err.message }); }
+});
+
+// POST importa prenotazioni selezionate dal Sheet
+app.post('/api/sync/sheets/importa', async (req, res) => {
+  const { prenotazioni, marcaProcessato } = req.body;
+  if (!prenotazioni || !Array.isArray(prenotazioni)) return res.status(400).json({ errore: 'Dati non validi' });
+
+  const risultati = { importate: 0, saltate: 0, errori: [] };
+
+  for (const p of prenotazioni) {
+    try {
+      let appartamento_id = p.appartamento_id;
+      if (!appartamento_id) {
+        let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [p.appartamento]);
+        if (appRes.rows.length === 0) appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${p.appartamento}%`]);
+        if (appRes.rows.length === 0) { risultati.saltate++; risultati.errori.push(`Non trovato: "${p.appartamento}"`); continue; }
+        appartamento_id = appRes.rows[0].id;
+      }
+
+      const esistente = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, p.check_in, p.check_out]);
+      if (esistente.rows.length > 0) { risultati.saltate++; continue; }
+
+      await pool.query(
+        `INSERT INTO prenotazioni (appartamento_id, guest_name, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,$6,'confermata')`,
+        [appartamento_id, p.nome_ospite || null, p.check_in, p.check_out, p.num_ospiti || 1, p.note || null]
+      );
+      risultati.importate++;
+    } catch (err) { risultati.errori.push(`Errore: ${err.message}`); }
+  }
+
+  // Marca come processato nel foglio se richiesto
+  if (marcaProcessato && prenotazioni.length > 0) {
+    try {
+      const oauth2Client = getGoogleOAuth2Client();
+      const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+      const tabName = prenotazioni[0].tab_name;
+
+      for (const p of prenotazioni) {
+        if (p.row_index) {
+          await sheets.spreadsheets.values.update({
+            spreadsheetId: SHEET_ID,
+            range: `${tabName}!G${p.row_index}`,
+            valueInputOption: 'RAW',
+            requestBody: { values: [['Si']] }
+          }).catch(e => console.error('Errore marca processato:', e.message));
+        }
+      }
+      console.log(`Google Sheet: ${prenotazioni.length} righe marcate come processate`);
+    } catch (err) { console.error('Errore marcatura sheet:', err.message); }
   }
 
   res.json(risultati);
