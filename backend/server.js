@@ -314,24 +314,26 @@ ISTRUZIONI:
 - Ignora messaggi di risposta automatica, ringraziamenti, conferme generiche tipo "grazie", "confermato"
 - Il nome appartamento è scritto prima dell'elenco di date (es. "Vignola", "Po", "Depretis")
 - Ogni appartamento può avere molte righe di date, estraile tutte
+- Se ci sono note o istruzioni speciali per una prenotazione (es. "PREPARARE PER 6", "letto aggiuntivo", "culla"), inseriscile nel campo "note"
+- Le note possono essere su una riga separata dopo le date, oppure inline
 
 Esempio input:
-Vignola
-5-7 maggio 2 ospiti
-7-8 maggio 3 ospiti
-30 maggio-4 giugno 3 ospiti
+Nome appartamento: PORTA PORTESE
+Data check in: 07/05/2026
+Data check out: 11/05/2026
+Numero ospiti: 4
+Note PREPARARE PER 6
 
-Po
-4-7 maggio 4 ospiti
-30 maggio- 1 giugno 4 ospiti
+Nome appartamento: FLAMINIO
+Data check in: 10/05/2026
+Data check out: 11/05/2026
+Numero ospiti: 4
+Note PREPARARE PER 3
 
 Esempio output:
 {"rilevante": true, "prenotazioni": [
-  {"appartamento": "Vignola", "check_in": "${annoCorrente}-05-05", "check_out": "${annoCorrente}-05-07", "ospiti": 2, "azione": "nuova"},
-  {"appartamento": "Vignola", "check_in": "${annoCorrente}-05-07", "check_out": "${annoCorrente}-05-08", "ospiti": 3, "azione": "nuova"},
-  {"appartamento": "Vignola", "check_in": "${annoCorrente}-05-30", "check_out": "${annoCorrente}-06-04", "ospiti": 3, "azione": "nuova"},
-  {"appartamento": "Po", "check_in": "${annoCorrente}-05-04", "check_out": "${annoCorrente}-05-07", "ospiti": 4, "azione": "nuova"},
-  {"appartamento": "Po", "check_in": "${annoCorrente}-05-30", "check_out": "${annoCorrente}-06-01", "ospiti": 4, "azione": "nuova"}
+  {"appartamento": "PORTA PORTESE", "check_in": "${annoCorrente}-05-07", "check_out": "${annoCorrente}-05-11", "ospiti": 4, "azione": "nuova", "note": "PREPARARE PER 6"},
+  {"appartamento": "FLAMINIO", "check_in": "${annoCorrente}-05-10", "check_out": "${annoCorrente}-05-11", "ospiti": 4, "azione": "nuova", "note": "PREPARARE PER 3"}
 ]}
 
 Se non ci sono prenotazioni da estrarre: {"rilevante": false, "prenotazioni": []}
@@ -532,11 +534,11 @@ app.post(['/api/sync/email/conferma', '/api/sync/email/confirm'], async (req, re
           [appartamento_id, pren.check_in, pren.check_out]
         );
         if (esistente.rows.length > 0) {
-          await pool.query('UPDATE prenotazioni SET num_ospiti=$1 WHERE id=$2', [pren.ospiti || 1, esistente.rows[0].id]);
+          await pool.query('UPDATE prenotazioni SET num_ospiti=$1, note=COALESCE($2, note) WHERE id=$3', [pren.ospiti || 1, pren.note || null, esistente.rows[0].id]);
         } else {
           await pool.query(
-            `INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, stato) VALUES ($1,$2,$3,$4,'confermata')`,
-            [appartamento_id, pren.check_in, pren.check_out, pren.ospiti || 1]
+            `INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`,
+            [appartamento_id, pren.check_in, pren.check_out, pren.ospiti || 1, pren.note || null]
           );
           risultati.importate++;
         }
