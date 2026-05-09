@@ -770,7 +770,6 @@ app.post('/api/sync/smoobu', async (req, res) => {
 
 // ============ SYNC SMARTPMS ============
 
-// Cache token SmartPMS in memoria (evita login ripetuti)
 let smartpmsTokenCache = { token: null, expiresAt: null };
 
 const loginSmartPMS = async () => {
@@ -785,10 +784,12 @@ const loginSmartPMS = async () => {
   if (!email || !password) throw new Error('SMARTPMS_EMAIL o SMARTPMS_PASSWORD non configurati su Railway');
 
   console.log('SmartPMS: login in corso...');
-  const res = await fetch('https://api.ciaobooking.com/api/v4/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-    body: JSON.stringify({ email, password })
+
+  // SmartPMS usa GET con credenziali come query params
+  const params = new URLSearchParams({ email, password });
+  const res = await fetch(`https://api.ciaobooking.com/api/v4/auth/login?${params}`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' }
   });
 
   if (!res.ok) {
@@ -797,14 +798,15 @@ const loginSmartPMS = async () => {
   }
 
   const data = await res.json();
-  // Il token può essere in data.token o data.data.token a seconda della versione API
-  const token = data.token || data.data?.token || data.access_token;
-  const expiresAt = data.expiresAt || data.data?.expiresAt || data.expires_at;
+  console.log('SmartPMS login risposta:', JSON.stringify(data).slice(0, 300));
 
-  if (!token) throw new Error('Login SmartPMS: token non trovato nella risposta. Risposta: ' + JSON.stringify(data).slice(0, 300));
+  const token = data.token || data.data?.token || data.access_token || data.data?.access_token;
+  const expiresAt = data.expiresAt || data.data?.expiresAt || data.expires_at || data.data?.expires_at;
+
+  if (!token) throw new Error('Login SmartPMS: token non trovato. Risposta: ' + JSON.stringify(data).slice(0, 300));
 
   smartpmsTokenCache = { token, expiresAt };
-  console.log('SmartPMS: login OK, token ottenuto');
+  console.log('SmartPMS: login OK');
   return token;
 };
 
@@ -832,32 +834,30 @@ const fetchSmartPMSBookings = async () => {
     const res = await fetch(url, { headers });
 
     if (res.status === 401) {
-      // Token scaduto, forza nuovo login
       smartpmsTokenCache = { token: null, expiresAt: null };
-      throw new Error('Token SmartPMS scaduto, riprova tra qualche secondo');
+      throw new Error('Token SmartPMS scaduto, riprova');
     }
-    if (!res.ok) throw new Error(`Errore API SmartPMS: ${res.status} ${await res.text().catch(() => '')}`);
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`Errore API SmartPMS: ${res.status} ${errText}`);
+    }
 
     const data = await res.json();
-
-    // La risposta può essere un array diretto o { data: [...], meta: {...} }
     const bookings = Array.isArray(data) ? data : (data.data || []);
     console.log(`SmartPMS: pagina ${pagina}, ${bookings.length} prenotazioni`);
 
     tuttePrenotazioni.push(...bookings);
 
-    // Paginazione: esci se meno di 100 risultati o se non ci sono più pagine
     const meta = data.meta || data.pagination || {};
     const totale = meta.total || meta.totalItems || null;
     if (bookings.length < 100 || (totale && tuttePrenotazioni.length >= totale)) break;
     pagina++;
   }
 
-  console.log(`SmartPMS: totale ${tuttePrenotazioni.length} prenotazioni recuperate`);
+  console.log(`SmartPMS: totale ${tuttePrenotazioni.length} prenotazioni`);
   return tuttePrenotazioni;
 };
 
-// Mappa tabella SmartPMS (come smoobu_mapping)
 const initSmartPMSMapping = async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS smartpms_mapping (
@@ -872,67 +872,40 @@ initSmartPMSMapping().catch(console.error);
 
 const trovaTramiteNomeSmartPMS = async (nomeSmartPMS) => {
   if (!nomeSmartPMS) return null;
-  // 1. Mapping personalizzato
   const mappingRes = await pool.query('SELECT appartamento_id FROM smartpms_mapping WHERE LOWER(nome_smartpms)=LOWER($1) LIMIT 1', [nomeSmartPMS]);
   if (mappingRes.rows.length > 0) return mappingRes.rows[0].appartamento_id;
-  // 2. Match esatto
   let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [nomeSmartPMS]);
   if (appRes.rows.length > 0) return appRes.rows[0].id;
-  // 3. Match parziale
   appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${nomeSmartPMS}%`]);
   if (appRes.rows.length > 0) return appRes.rows[0].id;
-  // 4. Nome DB contenuto nel nome SmartPMS
   const tutti = await pool.query('SELECT id, nome FROM appartamenti');
   for (const row of tutti.rows) { if (nomeSmartPMS.toLowerCase().includes(row.nome.toLowerCase())) return row.id; }
   return null;
 };
 
-// Normalizza una singola prenotazione SmartPMS
 const normalizzaSmartPMS = (b) => {
   const nomeAppartamento = b.property?.name || b.unit?.name || '';
   const checkIn = (b.start_date || '').slice(0, 10);
   const checkOut = (b.end_date || '').slice(0, 10);
   const numOspiti = (parseInt(b.guests) || 0) + (parseInt(b.children) || 0) || 1;
   const guestName = [b.given_name, b.family_name].filter(Boolean).join(' ') || null;
-  // status 0 = cancellata, altri valori = attiva (da verificare con dati reali)
   const cancellata = b.status === 0 || b.status === '0' || String(b.status || '').toLowerCase().includes('cancel');
   return { nomeAppartamento, checkIn, checkOut, numOspiti, guestName, cancellata };
 };
 
-// GET anteprima SmartPMS
 app.post('/api/sync/smartpms/anteprima', async (req, res) => {
   try {
     const bookings = await fetchSmartPMSBookings();
     const prenotazioni = [];
-
     for (const b of bookings) {
       const { nomeAppartamento, checkIn, checkOut, numOspiti, guestName, cancellata } = normalizzaSmartPMS(b);
       if (!nomeAppartamento || !checkIn || !checkOut || cancellata) continue;
-
       const appartamento_id = await trovaTramiteNomeSmartPMS(nomeAppartamento);
-      const appNome = appartamento_id
-        ? (await pool.query('SELECT nome FROM appartamenti WHERE id=$1', [appartamento_id])).rows[0]?.nome
-        : null;
-
+      const appNome = appartamento_id ? (await pool.query('SELECT nome FROM appartamenti WHERE id=$1', [appartamento_id])).rows[0]?.nome : null;
       let esistente = false;
-      if (appartamento_id) {
-        const dup = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, checkIn, checkOut]);
-        esistente = dup.rows.length > 0;
-      }
-
-      prenotazioni.push({
-        nome_smartpms: nomeAppartamento,
-        appartamento_id,
-        appartamento_nome: appNome,
-        check_in: checkIn,
-        check_out: checkOut,
-        num_ospiti: numOspiti,
-        guest_name: guestName,
-        esistente,
-        mappato: !!appartamento_id
-      });
+      if (appartamento_id) { const dup = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, checkIn, checkOut]); esistente = dup.rows.length > 0; }
+      prenotazioni.push({ nome_smartpms: nomeAppartamento, appartamento_id, appartamento_nome: appNome, check_in: checkIn, check_out: checkOut, num_ospiti: numOspiti, guest_name: guestName, esistente, mappato: !!appartamento_id });
     }
-
     res.json({ prenotazioni, totale: prenotazioni.length });
   } catch (err) {
     console.error('SmartPMS anteprima errore:', err.message);
@@ -940,12 +913,9 @@ app.post('/api/sync/smartpms/anteprima', async (req, res) => {
   }
 });
 
-// GET/POST mapping SmartPMS
 app.get('/api/smartpms/mapping', async (req, res) => {
-  try {
-    const result = await pool.query(`SELECT m.*, a.nome as appartamento_nome FROM smartpms_mapping m LEFT JOIN appartamenti a ON m.appartamento_id = a.id ORDER BY m.nome_smartpms`);
-    res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  try { const result = await pool.query(`SELECT m.*, a.nome as appartamento_nome FROM smartpms_mapping m LEFT JOIN appartamenti a ON m.appartamento_id = a.id ORDER BY m.nome_smartpms`); res.json(result.rows); }
+  catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/smartpms/mapping', async (req, res) => {
@@ -956,12 +926,10 @@ app.post('/api/smartpms/mapping', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST importa prenotazioni SmartPMS selezionate
 app.post('/api/sync/smartpms', async (req, res) => {
   try {
     const risultati = { importate: 0, saltate: 0, errori: [] };
 
-    // Import da anteprima (prenotazioni già selezionate dal frontend)
     if (req.body?.prenotazioni) {
       for (const pren of req.body.prenotazioni) {
         try {
@@ -972,10 +940,8 @@ app.post('/api/sync/smartpms', async (req, res) => {
           }
           const esistente = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appId, pren.check_in, pren.check_out]);
           if (esistente.rows.length > 0) { risultati.saltate++; continue; }
-          await pool.query(
-            `INSERT INTO prenotazioni (appartamento_id, guest_name, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,$6,'confermata')`,
-            [appId, pren.guest_name || null, pren.check_in, pren.check_out, pren.num_ospiti || 1, null]
-          );
+          await pool.query(`INSERT INTO prenotazioni (appartamento_id, guest_name, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,$6,'confermata')`,
+            [appId, pren.guest_name || null, pren.check_in, pren.check_out, pren.num_ospiti || 1, null]);
           risultati.importate++;
         } catch (err) { risultati.errori.push(err.message); }
       }
@@ -1015,8 +981,7 @@ const scheduleCron = () => {
       console.log(`Cron sync avviato alle ${now.toISOString()}`);
       syncItalianway(30).then(r => console.log(`Cron ItalianWay: ${r.importate} importate`)).catch(err => console.error('Cron ItalianWay errore:', err.message));
       syncSmoobu().then(r => console.log(`Cron Smoobu: ${r.importate} importate`)).catch(err => console.error('Cron Smoobu errore:', err.message));
-      // Sync SmartPMS automatico
-      fetch('http://localhost:' + port + '/api/sync/smartpms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      fetch(`http://localhost:${port}/api/sync/smartpms`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
         .then(r => r.json()).then(r => console.log(`Cron SmartPMS: ${r.importate} importate`)).catch(err => console.error('Cron SmartPMS errore:', err.message));
     }
   };
