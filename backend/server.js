@@ -769,14 +769,19 @@ app.post('/api/sync/smoobu', async (req, res) => {
 });
 
 // ============ SYNC SMARTPMS ============
+// Base URL: https://pms-api.smartness.com/api/3.0
+// Login: POST /auth/login → Bearer token
+// Tasks: GET /housekeeping-tasks/paginated?date=YYYY-MM-DD&status=1&planner=true
 
 let smartpmsTokenCache = { token: null, expiresAt: null };
 
 const loginSmartPMS = async () => {
-  // Usa token in cache se ancora valido (con 5 minuti di margine)
-  if (smartpmsTokenCache.token && smartpmsTokenCache.expiresAt && new Date() < new Date(smartpmsTokenCache.expiresAt - 5 * 60 * 1000)) {
-    console.log('SmartPMS: uso token in cache');
-    return smartpmsTokenCache.token;
+  if (smartpmsTokenCache.token && smartpmsTokenCache.expiresAt) {
+    const scadenza = new Date(smartpmsTokenCache.expiresAt).getTime() - 5 * 60 * 1000;
+    if (Date.now() < scadenza) {
+      console.log('SmartPMS: uso token in cache');
+      return smartpmsTokenCache.token;
+    }
   }
 
   const email = process.env.SMARTPMS_EMAIL;
@@ -784,78 +789,87 @@ const loginSmartPMS = async () => {
   if (!email || !password) throw new Error('SMARTPMS_EMAIL o SMARTPMS_PASSWORD non configurati su Railway');
 
   console.log('SmartPMS: login in corso...');
-
-  // SmartPMS usa GET con credenziali come query params
-  const params = new URLSearchParams({ email, password });
-  const res = await fetch(`https://api.ciaobooking.com/api/v4/auth/login?${params}`, {
-    method: 'GET',
-    headers: { 'Accept': 'application/json' }
+  const res = await fetch('https://pms-api.smartness.com/api/3.0/auth/login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'X-Platform': 'frontend',
+      'The-Timezone-Iana': 'Europe/Rome'
+    },
+    body: JSON.stringify({ email, password })
   });
 
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => '');
-    throw new Error(`Login SmartPMS fallito (${res.status}): ${errBody}`);
-  }
+  const bodyText = await res.text();
+  if (!res.ok) throw new Error(`Login SmartPMS fallito (${res.status}): ${bodyText}`);
 
-  const data = await res.json();
-  console.log('SmartPMS login risposta:', JSON.stringify(data).slice(0, 300));
+  let data;
+  try { data = JSON.parse(bodyText); } catch(e) { throw new Error('Risposta login non JSON: ' + bodyText.slice(0, 200)); }
 
-  const token = data.token || data.data?.token || data.access_token || data.data?.access_token;
-  const expiresAt = data.expiresAt || data.data?.expiresAt || data.expires_at || data.data?.expires_at;
+  console.log('SmartPMS login risposta keys:', Object.keys(data?.data || data || {}));
 
-  if (!token) throw new Error('Login SmartPMS: token non trovato. Risposta: ' + JSON.stringify(data).slice(0, 300));
+  const payload = data.data || data;
+  const token = payload.token || payload.access_token || payload.jwt || payload.api_token;
+  const expiresAt = payload.expires_at || payload.expiresAt || payload.expired_at;
 
-  smartpmsTokenCache = { token, expiresAt };
+  if (!token) throw new Error('Token non trovato nella risposta SmartPMS: ' + JSON.stringify(data).slice(0, 300));
+
+  smartpmsTokenCache = { token, expiresAt: expiresAt || new Date(Date.now() + 60 * 60 * 1000).toISOString() };
   console.log('SmartPMS: login OK');
   return token;
 };
 
-const fetchSmartPMSBookings = async () => {
+const getSmartPMSHeaders = async () => {
   const token = await loginSmartPMS();
-
-  const oggi = new Date();
-  const da = new Date(oggi); da.setDate(da.getDate() - 7);
-  const a = new Date(oggi); a.setDate(a.getDate() + 90);
-  const daStr = da.toISOString().slice(0, 10);
-  const aStr = a.toISOString().slice(0, 10);
-
-  const headers = {
-    'X-Authentication-Token': token,
+  return {
+    'Authorization': `Bearer ${token}`,
     'Accept': 'application/json',
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
+    'X-Platform': 'frontend',
+    'The-Timezone-Iana': 'Europe/Rome'
   };
+};
 
-  let tuttePrenotazioni = [], pagina = 1;
+const fetchSmartPMSTasks = async () => {
+  const headers = await getSmartPMSHeaders();
+  const oggi = new Date();
+  const da = new Date(oggi); da.setDate(da.getDate() - 1);
+  const a = new Date(oggi); a.setDate(a.getDate() + 90);
 
-  while (true) {
-    const url = `https://api.ciaobooking.com/internal/guest-portal/reservations/paginated?filter[start_date]=${daStr}&filter[end_date]=${aStr}&filter[status]=confirmed&include=property,unit&sort[start_date]=asc&page=${pagina}&per_page=100`;
-    console.log(`SmartPMS: fetch pagina ${pagina}...`);
-
-    const res = await fetch(url, { headers });
-
-    if (res.status === 401) {
-      smartpmsTokenCache = { token: null, expiresAt: null };
-      throw new Error('Token SmartPMS scaduto, riprova');
-    }
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      throw new Error(`Errore API SmartPMS: ${res.status} ${errText}`);
-    }
-
-    const data = await res.json();
-    const bookings = Array.isArray(data) ? data : (data.data || []);
-    console.log(`SmartPMS: pagina ${pagina}, ${bookings.length} prenotazioni`);
-
-    tuttePrenotazioni.push(...bookings);
-
-    const meta = data.meta || data.pagination || {};
-    const totale = meta.total || meta.totalItems || null;
-    if (bookings.length < 100 || (totale && tuttePrenotazioni.length >= totale)) break;
-    pagina++;
+  // Genera array di date
+  const date = [];
+  const cur = new Date(da);
+  while (cur <= a) {
+    date.push(cur.toISOString().slice(0, 10));
+    cur.setDate(cur.getDate() + 1);
   }
 
-  console.log(`SmartPMS: totale ${tuttePrenotazioni.length} prenotazioni`);
-  return tuttePrenotazioni;
+  console.log(`SmartPMS: fetch tasks per ${date.length} giorni...`);
+
+  const tuttiTask = [];
+  const batchSize = 10;
+
+  for (let i = 0; i < date.length; i += batchSize) {
+    const batch = date.slice(i, i + batchSize);
+    const results = await Promise.all(batch.map(async (data) => {
+      try {
+        const url = `https://pms-api.smartness.com/api/3.0/housekeeping-tasks/paginated?page=1&date=${data}&status=1&assignation=1&sortBy=time&order=asc&limit=100&planner=true`;
+        const res = await fetch(url, { headers });
+        if (!res.ok) return [];
+        const json = await res.json();
+        return json?.data?.collection || [];
+      } catch(e) {
+        console.error(`SmartPMS errore giorno ${data}:`, e.message);
+        return [];
+      }
+    }));
+    for (const r of results) tuttiTask.push(...r);
+    // Piccola pausa tra batch per non sovraccaricare l'API
+    if (i + batchSize < date.length) await new Promise(r => setTimeout(r, 200));
+  }
+
+  console.log(`SmartPMS: totale ${tuttiTask.length} tasks trovati`);
+  return tuttiTask;
 };
 
 const initSmartPMSMapping = async () => {
@@ -870,42 +884,57 @@ const initSmartPMSMapping = async () => {
 };
 initSmartPMSMapping().catch(console.error);
 
-const trovaTramiteNomeSmartPMS = async (nomeSmartPMS) => {
-  if (!nomeSmartPMS) return null;
-  const mappingRes = await pool.query('SELECT appartamento_id FROM smartpms_mapping WHERE LOWER(nome_smartpms)=LOWER($1) LIMIT 1', [nomeSmartPMS]);
+const trovaTramiteNomeSmartPMS = async (nome) => {
+  if (!nome) return null;
+  const mappingRes = await pool.query('SELECT appartamento_id FROM smartpms_mapping WHERE LOWER(nome_smartpms)=LOWER($1) LIMIT 1', [nome]);
   if (mappingRes.rows.length > 0) return mappingRes.rows[0].appartamento_id;
-  let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [nomeSmartPMS]);
+  let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [nome]);
   if (appRes.rows.length > 0) return appRes.rows[0].id;
-  appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${nomeSmartPMS}%`]);
+  appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${nome}%`]);
   if (appRes.rows.length > 0) return appRes.rows[0].id;
   const tutti = await pool.query('SELECT id, nome FROM appartamenti');
-  for (const row of tutti.rows) { if (nomeSmartPMS.toLowerCase().includes(row.nome.toLowerCase())) return row.id; }
+  for (const row of tutti.rows) { if (nome.toLowerCase().includes(row.nome.toLowerCase())) return row.id; }
   return null;
 };
 
-const normalizzaSmartPMS = (b) => {
-  const nomeAppartamento = b.property?.name || b.unit?.name || '';
-  const checkIn = (b.start_date || '').slice(0, 10);
-  const checkOut = (b.end_date || '').slice(0, 10);
-  const numOspiti = (parseInt(b.guests) || 0) + (parseInt(b.children) || 0) || 1;
-  const guestName = [b.given_name, b.family_name].filter(Boolean).join(' ') || null;
-  const cancellata = b.status === 0 || b.status === '0' || String(b.status || '').toLowerCase().includes('cancel');
-  return { nomeAppartamento, checkIn, checkOut, numOspiti, guestName, cancellata };
+const normalizzaTaskSmartPMS = (task) => {
+  const nomeAppartamento = task.property?.name || '';
+  const unitName = task.unit?.name || '';
+  const checkOut = (task.reservation?.end_date || task.date || '').slice(0, 10);
+  const checkIn = (task.reservation?.start_date || '').slice(0, 10);
+  const numOspiti = parseInt(task.next_reservation?.guests || task.reservation?.guests || 1) || 1;
+  return { nomeAppartamento, unitName, checkIn, checkOut, numOspiti, reservationId: task.reservation_id };
 };
 
 app.post('/api/sync/smartpms/anteprima', async (req, res) => {
   try {
-    const bookings = await fetchSmartPMSBookings();
+    const tasks = await fetchSmartPMSTasks();
     const prenotazioni = [];
-    for (const b of bookings) {
-      const { nomeAppartamento, checkIn, checkOut, numOspiti, guestName, cancellata } = normalizzaSmartPMS(b);
-      if (!nomeAppartamento || !checkIn || !checkOut || cancellata) continue;
-      const appartamento_id = await trovaTramiteNomeSmartPMS(nomeAppartamento);
+    const visti = new Set();
+
+    for (const task of tasks) {
+      const { nomeAppartamento, unitName, checkIn, checkOut, numOspiti, reservationId } = normalizzaTaskSmartPMS(task);
+      if (!checkIn || !checkOut) continue;
+
+      const key = `${reservationId || nomeAppartamento}-${checkOut}`;
+      if (visti.has(key)) continue;
+      visti.add(key);
+
+      let appartamento_id = await trovaTramiteNomeSmartPMS(nomeAppartamento);
+      if (!appartamento_id && unitName) appartamento_id = await trovaTramiteNomeSmartPMS(unitName);
+
+      const nomeUsato = nomeAppartamento || unitName;
       const appNome = appartamento_id ? (await pool.query('SELECT nome FROM appartamenti WHERE id=$1', [appartamento_id])).rows[0]?.nome : null;
+
       let esistente = false;
-      if (appartamento_id) { const dup = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, checkIn, checkOut]); esistente = dup.rows.length > 0; }
-      prenotazioni.push({ nome_smartpms: nomeAppartamento, appartamento_id, appartamento_nome: appNome, check_in: checkIn, check_out: checkOut, num_ospiti: numOspiti, guest_name: guestName, esistente, mappato: !!appartamento_id });
+      if (appartamento_id) {
+        const dup = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, checkIn, checkOut]);
+        esistente = dup.rows.length > 0;
+      }
+
+      prenotazioni.push({ nome_smartpms: nomeUsato, unit_name: unitName, appartamento_id, appartamento_nome: appNome, check_in: checkIn, check_out: checkOut, num_ospiti: numOspiti, reservation_id: reservationId, esistente, mappato: !!appartamento_id });
     }
+
     res.json({ prenotazioni, totale: prenotazioni.length });
   } catch (err) {
     console.error('SmartPMS anteprima errore:', err.message);
@@ -914,8 +943,10 @@ app.post('/api/sync/smartpms/anteprima', async (req, res) => {
 });
 
 app.get('/api/smartpms/mapping', async (req, res) => {
-  try { const result = await pool.query(`SELECT m.*, a.nome as appartamento_nome FROM smartpms_mapping m LEFT JOIN appartamenti a ON m.appartamento_id = a.id ORDER BY m.nome_smartpms`); res.json(result.rows); }
-  catch (err) { res.status(500).json({ error: err.message }); }
+  try {
+    const result = await pool.query(`SELECT m.*, a.nome as appartamento_nome FROM smartpms_mapping m LEFT JOIN appartamenti a ON m.appartamento_id = a.id ORDER BY m.nome_smartpms`);
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/smartpms/mapping', async (req, res) => {
@@ -936,12 +967,12 @@ app.post('/api/sync/smartpms', async (req, res) => {
           let appId = pren.appartamento_id;
           if (!appId) {
             appId = await trovaTramiteNomeSmartPMS(pren.nome_smartpms || '');
+            if (!appId && pren.unit_name) appId = await trovaTramiteNomeSmartPMS(pren.unit_name);
             if (!appId) { risultati.errori.push(`Non trovato: "${pren.nome_smartpms}"`); risultati.saltate++; continue; }
           }
           const esistente = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appId, pren.check_in, pren.check_out]);
           if (esistente.rows.length > 0) { risultati.saltate++; continue; }
-          await pool.query(`INSERT INTO prenotazioni (appartamento_id, guest_name, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,$6,'confermata')`,
-            [appId, pren.guest_name || null, pren.check_in, pren.check_out, pren.num_ospiti || 1, null]);
+          await pool.query(`INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, stato) VALUES ($1,$2,$3,$4,'confermata')`, [appId, pren.check_in, pren.check_out, pren.num_ospiti || 1]);
           risultati.importate++;
         } catch (err) { risultati.errori.push(err.message); }
       }
@@ -951,16 +982,26 @@ app.post('/api/sync/smartpms', async (req, res) => {
     }
 
     // Sync automatico completo
-    const bookings = await fetchSmartPMSBookings();
-    for (const b of bookings) {
+    const tasks = await fetchSmartPMSTasks();
+    const visti = new Set();
+    for (const task of tasks) {
       try {
-        const { nomeAppartamento, checkIn, checkOut, numOspiti, guestName, cancellata } = normalizzaSmartPMS(b);
-        if (!nomeAppartamento || !checkIn || !checkOut || cancellata) { risultati.saltate++; continue; }
-        const appartamento_id = await trovaTramiteNomeSmartPMS(nomeAppartamento);
-        if (!appartamento_id) { risultati.saltate++; const msg = `Appartamento non trovato: "${nomeAppartamento}"`; if (!risultati.errori.includes(msg)) risultati.errori.push(msg); continue; }
+        const { nomeAppartamento, unitName, checkIn, checkOut, numOspiti, reservationId } = normalizzaTaskSmartPMS(task);
+        if (!checkIn || !checkOut) { risultati.saltate++; continue; }
+        const key = `${reservationId || nomeAppartamento}-${checkOut}`;
+        if (visti.has(key)) { risultati.saltate++; continue; }
+        visti.add(key);
+        let appartamento_id = await trovaTramiteNomeSmartPMS(nomeAppartamento);
+        if (!appartamento_id && unitName) appartamento_id = await trovaTramiteNomeSmartPMS(unitName);
+        if (!appartamento_id) {
+          risultati.saltate++;
+          const msg = `Non trovato: "${nomeAppartamento || unitName}"`;
+          if (!risultati.errori.includes(msg)) risultati.errori.push(msg);
+          continue;
+        }
         const esistente = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, checkIn, checkOut]);
         if (esistente.rows.length > 0) { await pool.query('UPDATE prenotazioni SET num_ospiti=$1 WHERE id=$2', [numOspiti, esistente.rows[0].id]); risultati.saltate++; }
-        else { await pool.query(`INSERT INTO prenotazioni (appartamento_id, guest_name, check_in, check_out, num_ospiti, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`, [appartamento_id, guestName, checkIn, checkOut, numOspiti]); risultati.importate++; }
+        else { await pool.query(`INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, stato) VALUES ($1,$2,$3,$4,'confermata')`, [appartamento_id, checkIn, checkOut, numOspiti]); risultati.importate++; }
       } catch (err) { risultati.errori.push(`Errore: ${err.message}`); }
     }
     await pool.query(`CREATE TABLE IF NOT EXISTS sync_log (id SERIAL PRIMARY KEY, fonte VARCHAR(50), importate INT, saltate INT, errori TEXT, eseguito_il TIMESTAMP DEFAULT NOW())`).catch(() => {});
