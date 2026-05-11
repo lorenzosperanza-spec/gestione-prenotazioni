@@ -789,7 +789,7 @@ const loginSmartPMS = async () => {
   if (!email || !password) throw new Error('SMARTPMS_EMAIL o SMARTPMS_PASSWORD non configurati su Railway');
 
   console.log('SmartPMS: login in corso...');
-  const res = await fetch('https://pms-api.smartness.com/api/3.0/auth/login', {
+  const res = await fetch('https://pms-api.smartness.com/api/3.0/auth/session', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -797,7 +797,7 @@ const loginSmartPMS = async () => {
       'X-Platform': 'frontend',
       'The-Timezone-Iana': 'Europe/Rome'
     },
-    body: JSON.stringify({ email, password })
+    body: JSON.stringify({ email, password, isRemember: false })
   });
 
   const bodyText = await res.text();
