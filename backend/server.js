@@ -1,9 +1,12 @@
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 const port = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'cleanergo_secret_2024_xk9m';
 
 app.use(cors());
 app.use(express.json());
@@ -20,6 +23,31 @@ pool.connect((err, client, release) => {
 pool.query("SELECT current_database()", (err, result) => {
   console.log("BACKEND STA USANDO IL DB:", result?.rows);
 });
+
+// ============ INIT UTENTI ============
+const initUtenti = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS utenti (
+      id SERIAL PRIMARY KEY,
+      email VARCHAR(200) NOT NULL UNIQUE,
+      password_hash VARCHAR(200) NOT NULL,
+      nome VARCHAR(100),
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  const { rows } = await pool.query('SELECT COUNT(*) FROM utenti');
+  if (parseInt(rows[0].count) === 0) {
+    const hash = await bcrypt.hash('Asroma1927!', 10);
+    await pool.query(`
+      INSERT INTO utenti (email, password_hash, nome) VALUES
+        ('prenotazionepuliziepl2@gmail.com', $1, 'Admin'),
+        ('cleanergoservice@gmail.com', $1, 'Cleanergo'),
+        ('amministrazionecleanergo@gmail.com', $1, 'Amministrazione')
+    `, [hash]);
+    console.log('Utenti seed inseriti');
+  }
+};
+initUtenti().catch(console.error);
 
 const initDipendenti = async () => {
   await pool.query(`
@@ -45,16 +73,46 @@ const initDipendenti = async () => {
 };
 initDipendenti().catch(console.error);
 
+// ============ MIDDLEWARE AUTH ============
+const requireAuth = (req, res, next) => {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'Non autorizzato' });
+  try {
+    const decoded = jwt.verify(auth.slice(7), JWT_SECRET);
+    req.utente = decoded;
+    next();
+  } catch (err) { return res.status(401).json({ error: 'Token non valido o scaduto' }); }
+};
+
+// ============ AUTH ROUTES ============
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'Email e password obbligatorie' });
+    const result = await pool.query('SELECT * FROM utenti WHERE LOWER(email)=LOWER($1)', [email]);
+    if (result.rows.length === 0) return res.status(401).json({ error: 'Credenziali non valide' });
+    const utente = result.rows[0];
+    const ok = await bcrypt.compare(password, utente.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Credenziali non valide' });
+    const token = jwt.sign({ id: utente.id, email: utente.email, nome: utente.nome }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, utente: { id: utente.id, email: utente.email, nome: utente.nome } });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore server' }); }
+});
+
+app.post('/api/auth/logout', (req, res) => { res.json({ ok: true }); });
+
+app.get('/api/auth/me', requireAuth, (req, res) => { res.json({ utente: req.utente }); });
+
 // ============ ROUTES APPARTAMENTI ============
 
-app.get('/api/appartamenti', async (req, res) => {
+app.get('/api/appartamenti', requireAuth, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM appartamenti ORDER BY nome');
     res.json(result.rows);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Errore nel recupero appartamenti' }); }
 });
 
-app.get('/api/appartamenti/:id', async (req, res) => {
+app.get('/api/appartamenti/:id', requireAuth, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM appartamenti WHERE id = $1', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Appartamento non trovato' });
@@ -62,7 +120,7 @@ app.get('/api/appartamenti/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Errore nel recupero appartamento' }); }
 });
 
-app.post('/api/appartamenti', async (req, res) => {
+app.post('/api/appartamenti', requireAuth, async (req, res) => {
   try {
     const { owner, gestore, via, nome, prezzo, biancheria, logistica, pulizia, letti_max } = req.body;
     const result = await pool.query(
@@ -77,7 +135,7 @@ app.post('/api/appartamenti', async (req, res) => {
   }
 });
 
-app.put('/api/appartamenti/:id', async (req, res) => {
+app.put('/api/appartamenti/:id', requireAuth, async (req, res) => {
   try {
     const { owner, gestore, via, nome, prezzo, biancheria, logistica, pulizia, letti_max } = req.body;
     const result = await pool.query(
@@ -92,7 +150,7 @@ app.put('/api/appartamenti/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/appartamenti/:id', async (req, res) => {
+app.delete('/api/appartamenti/:id', requireAuth, async (req, res) => {
   try {
     const result = await pool.query('DELETE FROM appartamenti WHERE id=$1 RETURNING *', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Appartamento non trovato' });
@@ -102,7 +160,7 @@ app.delete('/api/appartamenti/:id', async (req, res) => {
 
 // ============ ROUTES PRENOTAZIONI ============
 
-app.get('/api/prenotazioni', async (req, res) => {
+app.get('/api/prenotazioni', requireAuth, async (req, res) => {
   try {
     await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS dipendente_id INTEGER`).catch(() => {});
     await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS stato_pulizia VARCHAR(20) DEFAULT 'da_fare'`).catch(() => {});
@@ -120,7 +178,7 @@ app.get('/api/prenotazioni', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Errore nel recupero prenotazioni' }); }
 });
 
-app.get('/api/prenotazioni/data/:data', async (req, res) => {
+app.get('/api/prenotazioni/data/:data', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT p.*, a.nome as appartamento_nome, a.via FROM prenotazioni p
@@ -131,7 +189,7 @@ app.get('/api/prenotazioni/data/:data', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Errore nel recupero prenotazioni' }); }
 });
 
-app.post('/api/prenotazioni', async (req, res) => {
+app.post('/api/prenotazioni', requireAuth, async (req, res) => {
   try {
     const { appartamento_id, guest_name, check_in, check_out, num_ospiti, note, stato, tipo } = req.body;
     await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) DEFAULT 'prenotazione'`).catch(() => {});
@@ -144,7 +202,7 @@ app.post('/api/prenotazioni', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Errore nella creazione prenotazione' }); }
 });
 
-app.put('/api/prenotazioni/:id', async (req, res) => {
+app.put('/api/prenotazioni/:id', requireAuth, async (req, res) => {
   try {
     const { appartamento_id, guest_name, check_in, check_out, num_ospiti, note, stato } = req.body;
     const result = await pool.query(
@@ -156,7 +214,7 @@ app.put('/api/prenotazioni/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Errore aggiornamento prenotazione' }); }
 });
 
-app.delete('/api/prenotazioni/:id', async (req, res) => {
+app.delete('/api/prenotazioni/:id', requireAuth, async (req, res) => {
   try {
     const result = await pool.query('DELETE FROM prenotazioni WHERE id=$1 RETURNING *', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Prenotazione non trovata' });
@@ -166,14 +224,14 @@ app.delete('/api/prenotazioni/:id', async (req, res) => {
 
 // ============ ROUTES DIPENDENTI ============
 
-app.get('/api/dipendenti', async (req, res) => {
+app.get('/api/dipendenti', requireAuth, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM dipendenti ORDER BY nome_cognome');
     res.json(result.rows);
   } catch (err) { res.status(500).json({ error: 'Errore nel recupero dipendenti' }); }
 });
 
-app.post('/api/dipendenti', async (req, res) => {
+app.post('/api/dipendenti', requireAuth, async (req, res) => {
   try {
     const { nome_cognome, ore_settimanali, patente } = req.body;
     const result = await pool.query(
@@ -184,7 +242,7 @@ app.post('/api/dipendenti', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Errore nella creazione dipendente' }); }
 });
 
-app.put('/api/dipendenti/:id', async (req, res) => {
+app.put('/api/dipendenti/:id', requireAuth, async (req, res) => {
   try {
     const { nome_cognome, ore_settimanali, patente } = req.body;
     const result = await pool.query(
@@ -196,7 +254,7 @@ app.put('/api/dipendenti/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Errore aggiornamento dipendente' }); }
 });
 
-app.delete('/api/dipendenti/:id', async (req, res) => {
+app.delete('/api/dipendenti/:id', requireAuth, async (req, res) => {
   try {
     const result = await pool.query('DELETE FROM dipendenti WHERE id=$1 RETURNING *', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Dipendente non trovato' });
@@ -206,7 +264,7 @@ app.delete('/api/dipendenti/:id', async (req, res) => {
 
 // ============ ROUTES PULIZIE ============
 
-app.patch('/api/prenotazioni/:id/assegna', async (req, res) => {
+app.patch('/api/prenotazioni/:id/assegna', requireAuth, async (req, res) => {
   try {
     await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS dipendente_id INTEGER`);
     const result = await pool.query(
@@ -218,7 +276,7 @@ app.patch('/api/prenotazioni/:id/assegna', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.patch('/api/prenotazioni/:id/stato-pulizia', async (req, res) => {
+app.patch('/api/prenotazioni/:id/stato-pulizia', requireAuth, async (req, res) => {
   try {
     const { stato_pulizia, nuova_data } = req.body;
     await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS stato_pulizia VARCHAR(20) DEFAULT 'da_fare'`);
@@ -226,10 +284,8 @@ app.patch('/api/prenotazioni/:id/stato-pulizia', async (req, res) => {
     if (stato_pulizia === 'posticipata' && nuova_data) {
       const orig = await pool.query(`SELECT check_out, data_pulizia_originale FROM prenotazioni WHERE id=$1`, [req.params.id]);
       const dataOriginale = orig.rows[0]?.data_pulizia_originale || orig.rows[0]?.check_out;
-      await pool.query(
-        `UPDATE prenotazioni SET stato_pulizia=$1,check_out=$2,data_pulizia_originale=$3 WHERE id=$4`,
-        [stato_pulizia, nuova_data, dataOriginale, req.params.id]
-      );
+      await pool.query(`UPDATE prenotazioni SET stato_pulizia=$1,check_out=$2,data_pulizia_originale=$3 WHERE id=$4`,
+        [stato_pulizia, nuova_data, dataOriginale, req.params.id]);
     } else {
       await pool.query(`UPDATE prenotazioni SET stato_pulizia=$1 WHERE id=$2`, [stato_pulizia, req.params.id]);
     }
@@ -245,8 +301,7 @@ const { google } = (() => { try { return require('googleapis'); } catch(e) { ret
 const getGoogleOAuth2Client = () => {
   if (!google) throw new Error('googleapis non installato');
   const client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET,
     'https://gestione-prenotazioni-production.up.railway.app/auth/google/callback'
   );
   if (process.env.GOOGLE_REFRESH_TOKEN) client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
@@ -266,39 +321,28 @@ app.get('/auth/google', (req, res) => {
 app.get('/auth/google/callback', async (req, res) => {
   try {
     const { tokens } = await getGoogleOAuth2Client().getToken(req.query.code);
-    console.log('GOOGLE_REFRESH_TOKEN:', tokens.refresh_token);
-    res.send(`<h2>✅ Autenticazione Gmail completata!</h2>
-      <p>Copia questo refresh token e aggiungilo come variabile <strong>GOOGLE_REFRESH_TOKEN</strong> su Railway:</p>
-      <textarea rows="4" cols="80">${tokens.refresh_token}</textarea>`);
+    res.send(`<h2>✅ Autenticazione Gmail completata!</h2><textarea rows="4" cols="80">${tokens.refresh_token}</textarea>`);
   } catch (err) { res.status(500).send('Errore callback: ' + err.message); }
 });
 
-// ============ CLAUDE AI - PARSING EMAIL ============
-
+// ============ CLAUDE AI ============
 const processaEmailConClaude = async (emailText, mittente, oggetto, tipoAzione) => {
   try {
     const annoCorrente = new Date().getFullYear();
-    const azioneContesto = tipoAzione === 'cancella'
-      ? 'Questa email contiene CANCELLAZIONI di prenotazioni. Usa sempre azione "cancella".'
-      : 'Questa email contiene prenotazioni da AGGIUNGERE/INSERIRE. Usa sempre azione "nuova".';
+    const azioneContesto = tipoAzione === 'cancella' ? 'Questa email contiene CANCELLAZIONI.' : 'Questa email contiene prenotazioni da AGGIUNGERE.';
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001', max_tokens: 4000,
-        messages: [{ role: 'user', content: `Sei un assistente che estrae prenotazioni di pulizie da email italiane.\n\n${azioneContesto}\n\nOggetto: ${oggetto}\nMittente: ${mittente}\nTesto email:\n${emailText}\n\nISTRUZIONI:\n- Estrai TUTTE le prenotazioni di TUTTI gli appartamenti menzionati\n- Anno sempre ${annoCorrente} salvo diversa indicazione\n- Se ci sono note o istruzioni speciali inseriscile nel campo "note"\n\nRispondi SOLO con JSON valido: {"rilevante": true/false, "prenotazioni": [{"appartamento": "...", "check_in": "YYYY-MM-DD", "check_out": "YYYY-MM-DD", "ospiti": N, "azione": "nuova/cancella", "note": "..."}]}` }]
-      })
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 4000, messages: [{ role: 'user', content: `Sei un assistente che estrae prenotazioni da email italiane.\n${azioneContesto}\nOggetto: ${oggetto}\nMittente: ${mittente}\nTesto:\n${emailText}\n\nRispondi SOLO con JSON: {"rilevante": true/false, "prenotazioni": [{"appartamento": "...", "check_in": "YYYY-MM-DD", "check_out": "YYYY-MM-DD", "ospiti": N, "azione": "nuova/cancella", "note": "..."}]}` }] })
     });
     const data = await response.json();
-    if (data.error) { console.error('Claude API error:', JSON.stringify(data.error)); return { prenotazioni: [], rilevante: false }; }
+    if (data.error) return { prenotazioni: [], rilevante: false };
     const text = data.content?.[0]?.text || '{}';
-    const clean = text.replace(/```json|```/g, '').trim();
-    return JSON.parse(clean);
-  } catch (err) { console.error('Errore Claude:', err.message); return { prenotazioni: [], rilevante: false }; }
+    return JSON.parse(text.replace(/```json|```/g, '').trim());
+  } catch (err) { return { prenotazioni: [], rilevante: false }; }
 };
 
 // ============ HELPER GMAIL ============
-
 const getOrCreateLabelId = async (gmail, labelName) => {
   const list = await gmail.users.labels.list({ userId: 'me' });
   const found = list.data.labels.find(l => l.name.toLowerCase() === labelName.toLowerCase());
@@ -314,8 +358,7 @@ const estraiTesto = (email) => {
       if (part.parts) extractText(part.parts);
       if (part.mimeType === 'text/plain' && part.body?.data) testo += Buffer.from(part.body.data, 'base64').toString('utf-8') + '\n';
       else if (part.mimeType === 'text/html' && part.body?.data && !testo) {
-        const html = Buffer.from(part.body.data, 'base64').toString('utf-8');
-        testo += html.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() + '\n';
+        testo += Buffer.from(part.body.data, 'base64').toString('utf-8').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() + '\n';
       }
     }
   };
@@ -344,14 +387,13 @@ const leggiEmailPerLabel = async (gmail, labelId, tipoAzione) => {
         prenotazioni.push(...parsed.prenotazioni.map(p => ({ ...p, azione: tipoAzione === 'cancella' ? 'cancella' : 'nuova' })));
         msgIds.push(msg.id);
       }
-    } catch (err) { console.error(`Errore lettura email ${msg.id}:`, err.message); }
+    } catch (err) { console.error(`Errore email ${msg.id}:`, err.message); }
   }
   return { prenotazioni, msgIds };
 };
 
-// ============ ANTEPRIMA EMAIL ============
-
-app.post(['/api/sync/email/anteprima', '/api/sync/email/preview'], async (req, res) => {
+// ============ EMAIL ROUTES ============
+app.post(['/api/sync/email/anteprima', '/api/sync/email/preview'], requireAuth, async (req, res) => {
   if (!process.env.GOOGLE_REFRESH_TOKEN) return res.json({ errore: 'GOOGLE_REFRESH_TOKEN non configurato.' });
   try {
     const gmail = google.gmail({ version: 'v1', auth: getGoogleOAuth2Client() });
@@ -367,15 +409,13 @@ app.post(['/api/sync/email/anteprima', '/api/sync/email/preview'], async (req, r
     const errori = [];
     for (const p of tuttePrenotazioni) {
       const appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) OR LOWER(nome) LIKE LOWER($2) LIMIT 1', [p.appartamento, `%${p.appartamento}%`]);
-      if (appRes.rows.length === 0) { const msg = `"${p.appartamento}" non trovato nel DB`; if (!errori.includes(msg)) errori.push(msg); }
+      if (appRes.rows.length === 0) { const msg = `"${p.appartamento}" non trovato`; if (!errori.includes(msg)) errori.push(msg); }
     }
     res.json({ emailAnalizzate: resImporta.msgIds.length + resCancella.msgIds.length + resAggiungi.msgIds.length, prenotazioni: tuttePrenotazioni, msgIds, labelIds, errori });
   } catch (err) { res.status(500).json({ errore: err.message }); }
 });
 
-// ============ CONFERMA IMPORT EMAIL ============
-
-app.post(['/api/sync/email/conferma', '/api/sync/email/confirm'], async (req, res) => {
+app.post(['/api/sync/email/conferma', '/api/sync/email/confirm'], requireAuth, async (req, res) => {
   const { prenotazioni, msgIds, labelIds } = req.body;
   if (!prenotazioni || !Array.isArray(prenotazioni)) return res.status(400).json({ errore: 'Dati non validi' });
   const risultati = { importate: 0, cancellate: 0, errori: [] };
@@ -385,7 +425,7 @@ app.post(['/api/sync/email/conferma', '/api/sync/email/confirm'], async (req, re
       if (!appartamento_id) {
         let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [pren.appartamento]);
         if (appRes.rows.length === 0) appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${pren.appartamento}%`]);
-        if (appRes.rows.length === 0) { risultati.errori.push(`Appartamento non trovato: "${pren.appartamento}"`); continue; }
+        if (appRes.rows.length === 0) { risultati.errori.push(`Non trovato: "${pren.appartamento}"`); continue; }
         appartamento_id = appRes.rows[0].id;
       }
       if (pren.azione === 'cancella') {
@@ -393,12 +433,8 @@ app.post(['/api/sync/email/conferma', '/api/sync/email/confirm'], async (req, re
         risultati.cancellate++;
       } else {
         const esistente = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, pren.check_in, pren.check_out]);
-        if (esistente.rows.length > 0) {
-          await pool.query('UPDATE prenotazioni SET num_ospiti=$1, note=COALESCE($2, note) WHERE id=$3', [pren.ospiti || 1, pren.note || null, esistente.rows[0].id]);
-        } else {
-          await pool.query(`INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`, [appartamento_id, pren.check_in, pren.check_out, pren.ospiti || 1, pren.note || null]);
-          risultati.importate++;
-        }
+        if (esistente.rows.length > 0) { await pool.query('UPDATE prenotazioni SET num_ospiti=$1, note=COALESCE($2, note) WHERE id=$3', [pren.ospiti || 1, pren.note || null, esistente.rows[0].id]); }
+        else { await pool.query(`INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`, [appartamento_id, pren.check_in, pren.check_out, pren.ospiti || 1, pren.note || null]); risultati.importate++; }
       }
     } catch (err) { risultati.errori.push(`Errore: ${err.message}`); }
   }
@@ -408,10 +444,8 @@ app.post(['/api/sync/email/conferma', '/api/sync/email/confirm'], async (req, re
       const idFatto = await getOrCreateLabelId(gmail, 'pl2-fatto');
       const tuttiIds = [...(msgIds.importa || []), ...(msgIds.cancella || []), ...(msgIds.aggiungi || [])];
       const labelsDaRimuovere = [labelIds.idImporta, labelIds.idCancella, labelIds.idAggiungi].filter(Boolean);
-      for (const id of tuttiIds) {
-        await gmail.users.messages.modify({ userId: 'me', id, requestBody: { addLabelIds: [idFatto], removeLabelIds: labelsDaRimuovere } }).catch(e => console.error('Errore modifica label:', e.message));
-      }
-    } catch (err) { console.error('Errore spostamento label:', err.message); }
+      for (const id of tuttiIds) await gmail.users.messages.modify({ userId: 'me', id, requestBody: { addLabelIds: [idFatto], removeLabelIds: labelsDaRimuovere } }).catch(() => {});
+    } catch (err) { console.error('Errore label:', err.message); }
   }
   res.json(risultati);
 });
@@ -421,9 +455,8 @@ app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().
 
 app.listen(port, () => console.log(`Server in esecuzione sulla porta ${port}`));
 
-// ============ IMPORT ITALIANWAY (manuale xlsx) ============
-
-app.post('/api/import/italianway', async (req, res) => {
+// ============ IMPORT ITALIANWAY ============
+app.post('/api/import/italianway', requireAuth, async (req, res) => {
   const { righe } = req.body;
   if (!righe || !Array.isArray(righe)) return res.status(400).json({ error: 'Dati non validi' });
   const risultati = { importate: 0, saltate: 0, errori: [] };
@@ -431,21 +464,20 @@ app.post('/api/import/italianway', async (req, res) => {
     try {
       const { appartamento, check_out, check_in, ospiti_entranti, ospiti_uscenti, note, categoria } = r;
       const appRes = await pool.query(`SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1`, [appartamento]);
-      if (appRes.rows.length === 0) { risultati.saltate++; risultati.errori.push(`Appartamento non trovato: "${appartamento}"`); continue; }
+      if (appRes.rows.length === 0) { risultati.saltate++; risultati.errori.push(`Non trovato: "${appartamento}"`); continue; }
       const appartamento_id = appRes.rows[0].id;
       const esistente = await pool.query(`SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_out=$2`, [appartamento_id, check_out]);
       if (esistente.rows.length > 0) { risultati.saltate++; continue; }
       await pool.query(`INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`,
         [appartamento_id, check_in || check_out, check_out, ospiti_entranti || ospiti_uscenti || 1, [categoria, note].filter(v => v && v !== '-').join(' | ') || null]);
       risultati.importate++;
-    } catch (err) { risultati.errori.push(`Errore su "${r.appartamento}": ${err.message}`); }
+    } catch (err) { risultati.errori.push(`Errore: ${err.message}`); }
   }
   res.json(risultati);
 });
 
-// ============ IMPORT SMOOBU (CSV) ============
-
-app.post('/api/import/smoobu', async (req, res) => {
+// ============ IMPORT SMOOBU ============
+app.post('/api/import/smoobu', requireAuth, async (req, res) => {
   const { righe } = req.body;
   if (!righe || !Array.isArray(righe)) return res.status(400).json({ error: 'Dati non validi' });
   const risultati = { importate: 0, saltate: 0, errori: [] };
@@ -454,20 +486,19 @@ app.post('/api/import/smoobu', async (req, res) => {
       const { appartamento, check_in, check_out, num_ospiti, note, portale } = r;
       let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [appartamento]);
       if (appRes.rows.length === 0) appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${appartamento}%`]);
-      if (appRes.rows.length === 0) { risultati.saltate++; risultati.errori.push(`Appartamento non trovato: "${appartamento}"`); continue; }
+      if (appRes.rows.length === 0) { risultati.saltate++; risultati.errori.push(`Non trovato: "${appartamento}"`); continue; }
       const appartamento_id = appRes.rows[0].id;
       const esistente = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, check_in, check_out]);
       if (esistente.rows.length > 0) { risultati.saltate++; continue; }
       await pool.query(`INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`,
         [appartamento_id, check_in, check_out, num_ospiti || 1, [portale, note].filter(v => v && v.trim()).join(' | ') || null]);
       risultati.importate++;
-    } catch (err) { risultati.errori.push(`Errore su "${r.appartamento}": ${err.message}`); }
+    } catch (err) { risultati.errori.push(`Errore: ${err.message}`); }
   }
   res.json(risultati);
 });
 
 // ============ SYNC GOOGLE SHEET ============
-
 const SHEET_ID = '1nC7Z_WXmhf0dJ5ZnGObKF9MF7esITLNMwAbfJ-El20c';
 
 const leggiGoogleSheet = async (tabName) => {
@@ -480,11 +511,9 @@ const leggiGoogleSheet = async (tabName) => {
   const annoCorrente = new Date().getFullYear();
   const parseData = (v) => {
     if (!v) return null;
-    const s = String(v).trim();
-    const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/);
+    const s = String(v).trim(), m = s.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/);
     if (!m) return null;
-    const dd = m[1].padStart(2, '0'), mm = m[2].padStart(2, '0');
-    const yy = m[3] ? (m[3].length === 2 ? `20${m[3]}` : m[3]) : annoCorrente;
+    const dd = m[1].padStart(2,'0'), mm = m[2].padStart(2,'0'), yy = m[3] ? (m[3].length===2?`20${m[3]}`:m[3]) : annoCorrente;
     return `${yy}-${mm}-${dd}`;
   };
   for (let i = 0; i < rows.length; i++) {
@@ -500,15 +529,12 @@ const leggiGoogleSheet = async (tabName) => {
   return { prenotazioni, tabName };
 };
 
-app.get('/api/sync/sheets/tabs', async (req, res) => {
-  try {
-    const sheets = google.sheets({ version: 'v4', auth: getGoogleOAuth2Client() });
-    const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
-    res.json({ tabs: meta.data.sheets.map(s => s.properties.title) });
-  } catch (err) { res.status(500).json({ errore: err.message }); }
+app.get('/api/sync/sheets/tabs', requireAuth, async (req, res) => {
+  try { const sheets = google.sheets({ version: 'v4', auth: getGoogleOAuth2Client() }); const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID }); res.json({ tabs: meta.data.sheets.map(s => s.properties.title) }); }
+  catch (err) { res.status(500).json({ errore: err.message }); }
 });
 
-app.post('/api/sync/sheets/anteprima', async (req, res) => {
+app.post('/api/sync/sheets/anteprima', requireAuth, async (req, res) => {
   try {
     const { prenotazioni, tabName } = await leggiGoogleSheet(req.body.tab);
     const result = [];
@@ -524,7 +550,7 @@ app.post('/api/sync/sheets/anteprima', async (req, res) => {
   } catch (err) { res.status(500).json({ errore: err.message }); }
 });
 
-app.post('/api/sync/sheets/importa', async (req, res) => {
+app.post('/api/sync/sheets/importa', requireAuth, async (req, res) => {
   const { prenotazioni, marcaProcessato } = req.body;
   if (!prenotazioni || !Array.isArray(prenotazioni)) return res.status(400).json({ errore: 'Dati non validi' });
   const risultati = { importate: 0, saltate: 0, errori: [] };
@@ -547,21 +573,17 @@ app.post('/api/sync/sheets/importa', async (req, res) => {
     try {
       const sheets = google.sheets({ version: 'v4', auth: getGoogleOAuth2Client() });
       const tabName = prenotazioni[0].tab_name;
-      for (const p of prenotazioni) {
-        if (p.row_index) await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `${tabName}!G${p.row_index}`, valueInputOption: 'RAW', requestBody: { values: [['Si']] } }).catch(() => {});
-      }
-    } catch (err) { console.error('Errore marcatura sheet:', err.message); }
+      for (const p of prenotazioni) { if (p.row_index) await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `${tabName}!G${p.row_index}`, valueInputOption: 'RAW', requestBody: { values: [['Si']] } }).catch(() => {}); }
+    } catch (err) { console.error('Errore marcatura:', err.message); }
   }
   res.json(risultati);
 });
 
-// ============ SYNC ITALIANWAY (automatico KALISI) ============
-
+// ============ SYNC ITALIANWAY ============
 const loginKalisi = async () => {
   const email = process.env.ITALIANWAY_EMAIL, password = process.env.ITALIANWAY_PASSWORD, orgCode = process.env.ITALIANWAY_ORG || 'CG-001';
-  if (!email || !password) throw new Error('ITALIANWAY_EMAIL o ITALIANWAY_PASSWORD non configurati');
-  let puppeteer;
-  try { puppeteer = require('puppeteer'); } catch(e) { throw new Error('Puppeteer non installato: ' + e.message); }
+  if (!email || !password) throw new Error('Credenziali ITALIANWAY non configurate');
+  let puppeteer; try { puppeteer = require('puppeteer'); } catch(e) { throw new Error('Puppeteer non installato'); }
   const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   try {
     const page = await browser.newPage();
@@ -572,92 +594,77 @@ const loginKalisi = async () => {
     for (const input of inputs) { const visible = await input.isVisible().catch(() => false); const type = await input.evaluate(el => el.type); if (visible && type !== 'hidden') visibleInputs.push({ input, type }); }
     for (let i = 0; i < visibleInputs.length; i++) {
       const { input, type } = visibleInputs[i]; await input.click({ clickCount: 3 });
-      if (type === 'password') await input.type(password);
-      else if (i === 0) await input.type(orgCode);
-      else if (i === 1 || type === 'email') await input.type(email);
+      if (type === 'password') await input.type(password); else if (i === 0) await input.type(orgCode); else if (i === 1 || type === 'email') await input.type(email);
     }
     await Promise.all([page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }), page.click('button, input[type="submit"]')]);
-    if (page.url().includes('sign_in')) throw new Error('Login fallito - verifica credenziali.');
+    if (page.url().includes('sign_in')) throw new Error('Login fallito');
     const cookies = await page.cookies();
     return cookies.map(c => `${c.name}=${c.value}`).join('; ');
   } finally { await browser.close(); }
 };
 
 const syncItalianway = async (giorni = 30) => {
-  const risultati = { importate: 0, saltate: 0, errori: [], sincronizzato_il: new Date().toISOString() };
-  let cookie;
-  try { cookie = await loginKalisi(); } catch (err) { risultati.errori.push('Login KALISI fallito: ' + err.message); return risultati; }
+  const risultati = { importate: 0, saltate: 0, errori: [] };
+  let cookie; try { cookie = await loginKalisi(); } catch (err) { risultati.errori.push('Login KALISI fallito: ' + err.message); return risultati; }
   try {
     const fine = new Date(); fine.setDate(fine.getDate() + giorni);
     const startStr = new Date().toISOString().slice(0, 10), endStr = fine.toISOString().slice(0, 10);
     let events = [];
     const plannerRes = await fetch(`https://www.italianway.house/admin/housecleanings/planner_dhx?from=${startStr}&to=${endStr}`,
-      { headers: { 'Cookie': cookie, 'Accept': 'application/json, text/javascript, */*; q=0.01', 'X-Requested-With': 'XMLHttpRequest', 'Referer': 'https://www.italianway.house/admin/housecleanings/planner_dhx', 'User-Agent': 'Mozilla/5.0' } });
+      { headers: { 'Cookie': cookie, 'Accept': 'application/json, text/javascript, */*; q=0.01', 'X-Requested-With': 'XMLHttpRequest', 'User-Agent': 'Mozilla/5.0' } });
     const ct = plannerRes.headers.get('content-type') || '';
     if (plannerRes.ok && ct.includes('json')) { const json = await plannerRes.json(); events = Array.isArray(json) ? json : (json.data || []); }
-    else {
-      const puppeteer2 = require('puppeteer');
-      const browser2 = await puppeteer2.launch({ headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
-      try {
-        const page2 = await browser2.newPage();
-        for (const cp of cookie.split('; ')) { const idx = cp.indexOf('='); if (idx > 0) await page2.setCookie({ name: cp.slice(0, idx).trim(), value: cp.slice(idx + 1).trim(), domain: 'www.italianway.house' }).catch(() => {}); }
-        await page2.goto('https://www.italianway.house/admin/housecleanings/planner_dhx', { waitUntil: 'networkidle2', timeout: 30000 });
-        events = await page2.evaluate(() => { try { return scheduler.getEvents(); } catch(e) { return []; } });
-      } finally { await browser2.close(); }
-    }
     for (const ev of events) {
       try {
         const nomeAppartamento = (ev.apt_name || '').trim(); if (!nomeAppartamento) continue;
-        const checkInStr = new Date(ev.start_date).toISOString().slice(0, 10), checkOutStr = new Date(ev.end_date).toISOString().slice(0, 10);
+        const checkInStr = new Date(ev.start_date).toISOString().slice(0,10), checkOutStr = new Date(ev.end_date).toISOString().slice(0,10);
         const ospiti = parseInt(ev.pax) || 1, note = ev.notes && ev.notes.trim() !== 'RESERVATION' ? ev.notes.trim() : null;
         const appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [nomeAppartamento]);
-        if (appRes.rows.length === 0) { risultati.saltate++; if (!risultati.errori.includes(`Appartamento non trovato: "${nomeAppartamento}"`)) risultati.errori.push(`Appartamento non trovato: "${nomeAppartamento}"`); continue; }
+        if (appRes.rows.length === 0) { risultati.saltate++; if (!risultati.errori.includes(`Non trovato: "${nomeAppartamento}"`)) risultati.errori.push(`Non trovato: "${nomeAppartamento}"`); continue; }
         const appartamento_id = appRes.rows[0].id;
         const esistente = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, checkInStr, checkOutStr]);
         if (esistente.rows.length > 0) { await pool.query('UPDATE prenotazioni SET num_ospiti=$1 WHERE appartamento_id=$2 AND check_in=$3 AND check_out=$4', [ospiti, appartamento_id, checkInStr, checkOutStr]); risultati.saltate++; }
         else { await pool.query(`INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`, [appartamento_id, checkInStr, checkOutStr, ospiti, note]); risultati.importate++; }
       } catch (err) { risultati.errori.push(`Errore evento: ${err.message}`); }
     }
-  } catch (err) { risultati.errori.push(`Errore planner: ${err.message}`); }
+  } catch (err) { risultati.errori.push(`Errore: ${err.message}`); }
   await pool.query(`CREATE TABLE IF NOT EXISTS sync_log (id SERIAL PRIMARY KEY, fonte VARCHAR(50), importate INT, saltate INT, errori TEXT, eseguito_il TIMESTAMP DEFAULT NOW())`);
   await pool.query(`INSERT INTO sync_log (fonte, importate, saltate, errori) VALUES ($1,$2,$3,$4)`, ['italianway', risultati.importate, risultati.saltate, JSON.stringify(risultati.errori)]);
   return risultati;
 };
 
-app.post('/api/sync/italianway', async (req, res) => {
+app.post('/api/sync/italianway', requireAuth, async (req, res) => {
   try { res.json(await syncItalianway(parseInt(req.query.giorni) || 30)); } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.get('/api/sync/status', async (req, res) => {
+app.get('/api/sync/status', requireAuth, async (req, res) => {
   try { const result = await pool.query(`SELECT * FROM sync_log ORDER BY eseguito_il DESC LIMIT 5`); res.json(result.rows); } catch { res.json([]); }
 });
 
 // ============ SYNC SMOOBU ============
-
 const initSmoobuMapping = async () => {
   await pool.query(`CREATE TABLE IF NOT EXISTS smoobu_mapping (id SERIAL PRIMARY KEY, nome_smoobu VARCHAR(200) NOT NULL UNIQUE, appartamento_id INTEGER NOT NULL, created_at TIMESTAMP DEFAULT NOW())`);
 };
 initSmoobuMapping().catch(console.error);
 
-const trovaTramiteNome = async (nomeSmoobu) => {
-  const mappingRes = await pool.query('SELECT appartamento_id FROM smoobu_mapping WHERE LOWER(nome_smoobu)=LOWER($1) LIMIT 1', [nomeSmoobu]);
+const trovaTramiteNome = async (nome) => {
+  const mappingRes = await pool.query('SELECT appartamento_id FROM smoobu_mapping WHERE LOWER(nome_smoobu)=LOWER($1) LIMIT 1', [nome]);
   if (mappingRes.rows.length > 0) return mappingRes.rows[0].appartamento_id;
-  let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [nomeSmoobu]);
+  let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [nome]);
   if (appRes.rows.length > 0) return appRes.rows[0].id;
-  appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${nomeSmoobu}%`]);
+  appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${nome}%`]);
   if (appRes.rows.length > 0) return appRes.rows[0].id;
   const tutti = await pool.query('SELECT id, nome FROM appartamenti');
-  for (const row of tutti.rows) { if (nomeSmoobu.toLowerCase().includes(row.nome.toLowerCase())) return row.id; }
+  for (const row of tutti.rows) { if (nome.toLowerCase().includes(row.nome.toLowerCase())) return row.id; }
   return null;
 };
 
 const fetchSmoobuBookings = async () => {
   const cookie = process.env.SMOOBU_COOKIE;
-  if (!cookie) throw new Error('SMOOBU_COOKIE non configurato su Railway');
-  const oggi = new Date();
-  const da = new Date(oggi); da.setDate(da.getDate() - 7);
-  const a = new Date(oggi); a.setDate(a.getDate() + 90);
-  const headers = { 'Cookie': cookie, 'Accept': 'application/json, text/plain, */*', 'Accept-Language': 'it-IT,it;q=0.9', 'Referer': 'https://login.smoobu.com/it/cockpit/calendar', 'User-Agent': 'Mozilla/5.0', 'X-Requested-With': 'XMLHttpRequest' };
+  if (!cookie) throw new Error('SMOOBU_COOKIE non configurato');
+  const oggi = new Date(), da = new Date(oggi), a = new Date(oggi);
+  da.setDate(da.getDate() - 7); a.setDate(a.getDate() + 90);
+  const headers = { 'Cookie': cookie, 'Accept': 'application/json', 'Referer': 'https://login.smoobu.com/it/cockpit/calendar', 'User-Agent': 'Mozilla/5.0', 'X-Requested-With': 'XMLHttpRequest' };
   let tuttePrenotazioni = [], pagina = 1;
   while (true) {
     const url = `https://login.smoobu.com/api/v1/users/1683032/bookings?filter%5Bfrom%5D=${da.toISOString().slice(0,10)}&filter%5Bto%5D=${a.toISOString().slice(0,10)}&page%5Bsize%5D=100&page%5Bnumber%5D=${pagina}`;
@@ -668,18 +675,15 @@ const fetchSmoobuBookings = async () => {
     let bookings = [];
     if (data.data && Array.isArray(data.data)) {
       const aptMap = {};
-      if (data.included) { for (const inc of data.included) aptMap[inc.id] = inc.attributes?.name || inc.attributes?.title || ''; }
+      if (data.included) { for (const inc of data.included) aptMap[inc.id] = inc.attributes?.name || ''; }
       if (Object.keys(aptMap).length === 0) {
-        try {
-          const propRes = await fetch('https://login.smoobu.com/api/v2/users/1683032/properties?page[size]=100', { headers });
-          if (propRes.ok) { const propData = await propRes.json(); for (const p of (propData.data || propData.properties || [])) { if (p.id && (p.attributes?.name || p.name)) aptMap[p.id] = p.attributes?.name || p.name; } }
-        } catch(e) {}
+        try { const propRes = await fetch('https://login.smoobu.com/api/v2/users/1683032/properties?page[size]=100', { headers }); if (propRes.ok) { const propData = await propRes.json(); for (const p of (propData.data || propData.properties || [])) { if (p.id) aptMap[p.id] = p.attributes?.name || p.name || ''; } } } catch(e) {}
       }
       bookings = data.data.map(item => {
         const attr = item.attributes || {}, propId = item.relationships?.property?.data?.id;
-        const aptName = aptMap[propId] || attr.apartmentName || attr['apartment-name'] || '';
+        const aptName = aptMap[propId] || attr.apartmentName || '';
         const stato = attr.status, cancellata = stato === 0 || stato === '0' || String(stato).toLowerCase().includes('cancel');
-        return { arrival: (attr.arrivalDate || '').slice(0, 10), departure: (attr.departureDate || '').slice(0, 10), adults: attr.numberOfGuests || attr.guestCount || attr.adults || 1, children: 0, status: cancellata ? 'cancelled' : 'confirmed', apartment: { name: aptName }, guestNote: attr.guest?.notes || attr.assistantNotes || null };
+        return { arrival: (attr.arrivalDate||'').slice(0,10), departure: (attr.departureDate||'').slice(0,10), adults: attr.numberOfGuests||attr.adults||1, children: 0, status: cancellata?'cancelled':'confirmed', apartment: { name: aptName }, guestNote: attr.guest?.notes||null };
       });
     } else { bookings = data.bookings || (Array.isArray(data) ? data : []); }
     tuttePrenotazioni.push(...bookings);
@@ -689,31 +693,28 @@ const fetchSmoobuBookings = async () => {
   return tuttePrenotazioni;
 };
 
-app.get('/api/smoobu/mapping', async (req, res) => {
+app.get('/api/smoobu/mapping', requireAuth, async (req, res) => {
   try { const result = await pool.query(`SELECT m.*, a.nome as appartamento_nome FROM smoobu_mapping m LEFT JOIN appartamenti a ON m.appartamento_id = a.id ORDER BY m.nome_smoobu`); res.json(result.rows); } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/smoobu/mapping', async (req, res) => {
-  try {
-    const { nome_smoobu, appartamento_id } = req.body;
-    await pool.query(`INSERT INTO smoobu_mapping (nome_smoobu, appartamento_id) VALUES ($1,$2) ON CONFLICT (nome_smoobu) DO UPDATE SET appartamento_id=$2`, [nome_smoobu, appartamento_id]);
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+app.post('/api/smoobu/mapping', requireAuth, async (req, res) => {
+  try { const { nome_smoobu, appartamento_id } = req.body; await pool.query(`INSERT INTO smoobu_mapping (nome_smoobu, appartamento_id) VALUES ($1,$2) ON CONFLICT (nome_smoobu) DO UPDATE SET appartamento_id=$2`, [nome_smoobu, appartamento_id]); res.json({ ok: true }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/sync/smoobu/anteprima', async (req, res) => {
+app.post('/api/sync/smoobu/anteprima', requireAuth, async (req, res) => {
   try {
     const bookings = await fetchSmoobuBookings();
     const prenotazioni = [];
     for (const b of bookings) {
-      const nomeSmoobu = b.apartment?.name || b.property?.name || b.apartmentName || b.unit?.name || ''; if (!nomeSmoobu) continue;
+      const nomeSmoobu = b.apartment?.name || ''; if (!nomeSmoobu) continue;
       const checkIn = b.arrival || '', checkOut = b.departure || ''; if (!checkIn || !checkOut) continue;
-      if ((b.status || '').toLowerCase().includes('cancel')) continue;
+      if ((b.status||'').toLowerCase().includes('cancel')) continue;
       const appartamento_id = await trovaTramiteNome(nomeSmoobu);
       const appNome = appartamento_id ? (await pool.query('SELECT nome FROM appartamenti WHERE id=$1', [appartamento_id])).rows[0]?.nome : null;
       let esistente = false;
       if (appartamento_id) { const dup = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, checkIn, checkOut]); esistente = dup.rows.length > 0; }
-      prenotazioni.push({ nome_smoobu: nomeSmoobu, appartamento_id, appartamento_nome: appNome, check_in: checkIn, check_out: checkOut, num_ospiti: (parseInt(b.adults) || 0) + (parseInt(b.children) || 0) || 1, portale: b.channel?.name || null, esistente, mappato: !!appartamento_id });
+      prenotazioni.push({ nome_smoobu: nomeSmoobu, appartamento_id, appartamento_nome: appNome, check_in: checkIn, check_out: checkOut, num_ospiti: (parseInt(b.adults)||0)+(parseInt(b.children)||0)||1, portale: b.channel?.name||null, esistente, mappato: !!appartamento_id });
     }
     res.json({ prenotazioni, totale: prenotazioni.length });
   } catch (err) { res.status(500).json({ errore: err.message }); }
@@ -725,40 +726,34 @@ const syncSmoobu = async () => {
     const bookings = await fetchSmoobuBookings();
     for (const b of bookings) {
       try {
-        const nomeApp = b.apartment?.name || b.property?.name || b.apartmentName || b.unit?.name || ''; if (!nomeApp) { risultati.saltate++; continue; }
-        const checkIn = b.arrival || '', checkOut = b.departure || ''; if (!checkIn || !checkOut) { risultati.saltate++; continue; }
-        if ((b.status || '').toLowerCase().includes('cancel')) { risultati.saltate++; continue; }
+        const nomeApp = b.apartment?.name || ''; if (!nomeApp) { risultati.saltate++; continue; }
+        const checkIn = b.arrival||'', checkOut = b.departure||''; if (!checkIn||!checkOut) { risultati.saltate++; continue; }
+        if ((b.status||'').toLowerCase().includes('cancel')) { risultati.saltate++; continue; }
         const appartamento_id = await trovaTramiteNome(nomeApp);
-        if (!appartamento_id) { risultati.saltate++; const msg = `Appartamento non trovato: "${nomeApp}"`; if (!risultati.errori.includes(msg)) risultati.errori.push(msg); continue; }
-        const numOspiti = (parseInt(b.adults) || 0) + (parseInt(b.children) || 0) || 1;
+        if (!appartamento_id) { risultati.saltate++; const msg=`Non trovato: "${nomeApp}"`; if(!risultati.errori.includes(msg)) risultati.errori.push(msg); continue; }
+        const numOspiti = (parseInt(b.adults)||0)+(parseInt(b.children)||0)||1;
         const esistente = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, checkIn, checkOut]);
         if (esistente.rows.length > 0) { await pool.query('UPDATE prenotazioni SET num_ospiti=$1 WHERE id=$2', [numOspiti, esistente.rows[0].id]); risultati.saltate++; }
-        else { await pool.query(`INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`, [appartamento_id, checkIn, checkOut, numOspiti, b.guestNote || null]); risultati.importate++; }
+        else { await pool.query(`INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`, [appartamento_id, checkIn, checkOut, numOspiti, b.guestNote||null]); risultati.importate++; }
       } catch (err) { risultati.errori.push(`Errore: ${err.message}`); }
     }
   } catch (err) { risultati.errori.push(err.message); }
-  await pool.query(`CREATE TABLE IF NOT EXISTS sync_log (id SERIAL PRIMARY KEY, fonte VARCHAR(50), importate INT, saltate INT, errori TEXT, eseguito_il TIMESTAMP DEFAULT NOW())`).catch(() => {});
-  await pool.query(`INSERT INTO sync_log (fonte, importate, saltate, errori) VALUES ($1,$2,$3,$4)`, ['smoobu', risultati.importate, risultati.saltate, JSON.stringify(risultati.errori)]).catch(() => {});
+  await pool.query(`CREATE TABLE IF NOT EXISTS sync_log (id SERIAL PRIMARY KEY, fonte VARCHAR(50), importate INT, saltate INT, errori TEXT, eseguito_il TIMESTAMP DEFAULT NOW())`).catch(()=>{});
+  await pool.query(`INSERT INTO sync_log (fonte, importate, saltate, errori) VALUES ($1,$2,$3,$4)`, ['smoobu', risultati.importate, risultati.saltate, JSON.stringify(risultati.errori)]).catch(()=>{});
   return risultati;
 };
 
-app.post('/api/sync/smoobu', async (req, res) => {
+app.post('/api/sync/smoobu', requireAuth, async (req, res) => {
   try {
     if (req.body?.prenotazioni) {
       const risultati = { importate: 0, saltate: 0, errori: [] };
       for (const pren of req.body.prenotazioni) {
         try {
           let appId = pren.appartamento_id;
-          if (!appId) {
-            const nomeApp = pren.nome_smoobu || pren.appartamento || '';
-            let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [nomeApp]);
-            if (appRes.rows.length === 0) appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${nomeApp}%`]);
-            if (appRes.rows.length === 0) { risultati.errori.push(`Non trovato: "${nomeApp}"`); risultati.saltate++; continue; }
-            appId = appRes.rows[0].id;
-          }
+          if (!appId) { const nomeApp = pren.nome_smoobu||pren.appartamento||''; let appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome)=LOWER($1) LIMIT 1', [nomeApp]); if (appRes.rows.length===0) appRes = await pool.query('SELECT id FROM appartamenti WHERE LOWER(nome) LIKE LOWER($1) LIMIT 1', [`%${nomeApp}%`]); if (appRes.rows.length===0) { risultati.errori.push(`Non trovato: "${nomeApp}"`); risultati.saltate++; continue; } appId = appRes.rows[0].id; }
           const esistente = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appId, pren.check_in, pren.check_out]);
-          if (esistente.rows.length > 0) { risultati.saltate++; continue; }
-          await pool.query(`INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`, [appId, pren.check_in, pren.check_out, pren.num_ospiti || 1, pren.portale || null]);
+          if (esistente.rows.length>0) { risultati.saltate++; continue; }
+          await pool.query(`INSERT INTO prenotazioni (appartamento_id, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`, [appId, pren.check_in, pren.check_out, pren.num_ospiti||1, pren.portale||null]);
           risultati.importate++;
         } catch (err) { risultati.errori.push(err.message); }
       }
@@ -769,38 +764,28 @@ app.post('/api/sync/smoobu', async (req, res) => {
 });
 
 // ============ SYNC SMARTPMS ============
-// Login: POST /api/3.0/auth/session → Bearer token
-// Prenotazioni: GET /api/3.0/reservations/paginated
-
 let smartpmsTokenCache = { token: null, expiresAt: null };
 
 const loginSmartPMS = async () => {
   if (smartpmsTokenCache.token && smartpmsTokenCache.expiresAt) {
     const scadenza = new Date(smartpmsTokenCache.expiresAt * 1000).getTime() - 5 * 60 * 1000;
-    if (Date.now() < scadenza) {
-      console.log('SmartPMS: uso token in cache');
-      return smartpmsTokenCache.token;
-    }
+    if (Date.now() < scadenza) return smartpmsTokenCache.token;
   }
-  const email = process.env.SMARTPMS_EMAIL;
-  const password = process.env.SMARTPMS_PASSWORD;
-  if (!email || !password) throw new Error('SMARTPMS_EMAIL o SMARTPMS_PASSWORD non configurati su Railway');
-  console.log('SmartPMS: login in corso...');
+  const email = process.env.SMARTPMS_EMAIL, password = process.env.SMARTPMS_PASSWORD;
+  if (!email || !password) throw new Error('SMARTPMS_EMAIL o SMARTPMS_PASSWORD non configurati');
   const res = await fetch('https://pms-api.smartness.com/api/3.0/auth/session', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Platform': 'frontend', 'The-Timezone-Iana': 'Europe/Rome' },
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Platform': 'frontend', 'The-Timezone-Iana': 'Europe/Rome' },
     body: JSON.stringify({ email, password, isRemember: false })
   });
   const bodyText = await res.text();
   if (!res.ok) throw new Error(`Login SmartPMS fallito (${res.status}): ${bodyText}`);
-  let data;
-  try { data = JSON.parse(bodyText); } catch(e) { throw new Error('Risposta login non JSON: ' + bodyText.slice(0, 200)); }
+  const data = JSON.parse(bodyText);
   const payload = data.data || data;
-  const token = payload.token || payload.access_token || payload.jwt;
+  const token = payload.token || payload.access_token;
   const expiresAt = payload.expiresAt || payload.expires_at;
-  if (!token) throw new Error('Token non trovato: ' + JSON.stringify(data).slice(0, 300));
+  if (!token) throw new Error('Token non trovato: ' + JSON.stringify(data).slice(0, 200));
   smartpmsTokenCache = { token, expiresAt };
-  console.log('SmartPMS: login OK, token scade:', expiresAt ? new Date(expiresAt * 1000).toISOString() : 'N/A');
+  console.log('SmartPMS: login OK');
   return token;
 };
 
@@ -809,34 +794,24 @@ const getSmartPMSHeaders = async () => {
   return { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json', 'Content-Type': 'application/json', 'X-Platform': 'frontend', 'The-Timezone-Iana': 'Europe/Rome' };
 };
 
-// Fetch TUTTE le prenotazioni da SmartPMS usando /reservations/paginated
 const fetchSmartPMSReservations = async () => {
   const headers = await getSmartPMSHeaders();
-  const oggi = new Date();
-  const da = new Date(oggi); da.setDate(da.getDate() - 7);
-  const a = new Date(oggi); a.setDate(a.getDate() + 180);
-  const daStr = da.toISOString().slice(0, 10);
-  const aStr = a.toISOString().slice(0, 10);
-
+  const oggi = new Date(), da = new Date(oggi), a = new Date(oggi);
+  da.setDate(da.getDate() - 7); a.setDate(a.getDate() + 180);
   let tuttePrenotazioni = [], pagina = 1;
-
   while (true) {
-    const url = `https://pms-api.smartness.com/api/3.0/reservations/paginated?page=${pagina}&perPage=100&order=asc&sortBy=start_date&from=${daStr}&to=${aStr}&status=confirmed`;
-    console.log(`SmartPMS reservations: pagina ${pagina}...`);
+    const url = `https://pms-api.smartness.com/api/3.0/reservations/paginated?page=${pagina}&perPage=100&order=asc&sortBy=start_date&from=${da.toISOString().slice(0,10)}&to=${a.toISOString().slice(0,10)}&status=confirmed`;
     const res = await fetch(url, { headers });
-    if (res.status === 401) { smartpmsTokenCache = { token: null, expiresAt: null }; throw new Error('Token SmartPMS scaduto, riprova'); }
-    if (!res.ok) { const t = await res.text().catch(() => ''); throw new Error(`Errore API SmartPMS: ${res.status} ${t}`); }
+    if (res.status === 401) { smartpmsTokenCache = { token: null, expiresAt: null }; throw new Error('Token SmartPMS scaduto'); }
+    if (!res.ok) throw new Error(`Errore API SmartPMS: ${res.status}`);
     const data = await res.json();
     const items = data.data || (Array.isArray(data) ? data : []);
-    console.log(`SmartPMS: pagina ${pagina}, ${items.length} prenotazioni`);
     tuttePrenotazioni.push(...items);
     const meta = data.meta || {};
     const totalPages = meta.lastPage || meta.last_page || 1;
     if (pagina >= totalPages || items.length < 100) break;
     pagina++;
   }
-
-  console.log(`SmartPMS: totale ${tuttePrenotazioni.length} prenotazioni`);
   return tuttePrenotazioni;
 };
 
@@ -858,151 +833,97 @@ const trovaTramiteNomeSmartPMS = async (nome) => {
   return null;
 };
 
-// Normalizza una prenotazione SmartPMS dal formato /reservations/paginated
 const normalizzaReservationSmartPMS = (r) => {
-  // Nome appartamento: unit.name è il nome specifico dell'unità (es. "Colonna BIG")
-  // property.name è il gruppo (es. "RM - COLONNA 44")
-  const unitName = r.unit?.name || '';
-  const propertyName = r.property?.name || r.reservation_group?.name || '';
-  const checkIn = (r.start_date || r.arrival_date || r.checkin || '').slice(0, 10);
-  const checkOut = (r.end_date || r.departure_date || r.checkout || '').slice(0, 10);
-  const numOspiti = parseInt(r.guests || r.adults || 1) || 1;
-  const guestName = r.client ? `${r.client.first_name || ''} ${r.client.last_name || ''}`.trim() : (r.given_name ? `${r.given_name} ${r.family_name || ''}`.trim() : '');
-  const cancellata = r.status === 0 || String(r.status || '').toLowerCase().includes('cancel') || String(r.status || '').toLowerCase().includes('cancell');
+  const unitName = r.unit?.name || '', propertyName = r.property?.name || '';
+  const checkIn = (r.start_date||r.arrival_date||'').slice(0,10), checkOut = (r.end_date||r.departure_date||'').slice(0,10);
+  const numOspiti = parseInt(r.guests||r.adults||1)||1;
+  const guestName = r.client ? `${r.client.first_name||''} ${r.client.last_name||''}`.trim() : '';
+  const cancellata = r.status===0||String(r.status||'').toLowerCase().includes('cancel');
   return { unitName, propertyName, checkIn, checkOut, numOspiti, guestName, cancellata, reservationId: r.id };
 };
 
-app.post('/api/sync/smartpms/anteprima', async (req, res) => {
+app.post('/api/sync/smartpms/anteprima', requireAuth, async (req, res) => {
   try {
     const reservations = await fetchSmartPMSReservations();
-    const prenotazioni = [];
-    const visti = new Set();
-
+    const prenotazioni = [], visti = new Set();
     for (const r of reservations) {
       const { unitName, propertyName, checkIn, checkOut, numOspiti, guestName, cancellata, reservationId } = normalizzaReservationSmartPMS(r);
       if (!checkIn || !checkOut || cancellata) continue;
-      const key = `${reservationId}-${checkIn}-${checkOut}`;
-      if (visti.has(key)) continue;
-      visti.add(key);
-
-      // Prima prova con unitName (più specifico), poi con propertyName
+      const key = `${reservationId}-${checkIn}-${checkOut}`; if (visti.has(key)) continue; visti.add(key);
       let appartamento_id = await trovaTramiteNomeSmartPMS(unitName);
       if (!appartamento_id && propertyName) appartamento_id = await trovaTramiteNomeSmartPMS(propertyName);
-
       const nomeUsato = unitName || propertyName;
       const appNome = appartamento_id ? (await pool.query('SELECT nome FROM appartamenti WHERE id=$1', [appartamento_id])).rows[0]?.nome : null;
-
       let esistente = false;
-      if (appartamento_id) {
-        const dup = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, checkIn, checkOut]);
-        esistente = dup.rows.length > 0;
-      }
-
-      prenotazioni.push({
-        nome_smartpms: nomeUsato,
-        unit_name: unitName,
-        property_name: propertyName,
-        appartamento_id,
-        appartamento_nome: appNome,
-        check_in: checkIn,
-        check_out: checkOut,
-        num_ospiti: numOspiti,
-        guest_name: guestName,
-        note: '',
-        reservation_id: reservationId,
-        esistente,
-        mappato: !!appartamento_id
-      });
+      if (appartamento_id) { const dup = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, checkIn, checkOut]); esistente = dup.rows.length > 0; }
+      prenotazioni.push({ nome_smartpms: nomeUsato, unit_name: unitName, property_name: propertyName, appartamento_id, appartamento_nome: appNome, check_in: checkIn, check_out: checkOut, num_ospiti: numOspiti, guest_name: guestName, note: '', reservation_id: reservationId, esistente, mappato: !!appartamento_id });
     }
-
     res.json({ prenotazioni, totale: prenotazioni.length });
-  } catch (err) {
-    console.error('SmartPMS anteprima errore:', err.message);
-    res.status(500).json({ errore: err.message });
-  }
+  } catch (err) { console.error('SmartPMS anteprima errore:', err.message); res.status(500).json({ errore: err.message }); }
 });
 
-app.get('/api/smartpms/mapping', async (req, res) => {
+app.get('/api/smartpms/mapping', requireAuth, async (req, res) => {
   try { const result = await pool.query(`SELECT m.*, a.nome as appartamento_nome FROM smartpms_mapping m LEFT JOIN appartamenti a ON m.appartamento_id = a.id ORDER BY m.nome_smartpms`); res.json(result.rows); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/smartpms/mapping', async (req, res) => {
-  try {
-    const { nome_smartpms, appartamento_id } = req.body;
-    await pool.query(`INSERT INTO smartpms_mapping (nome_smartpms, appartamento_id) VALUES ($1,$2) ON CONFLICT (nome_smartpms) DO UPDATE SET appartamento_id=$2`, [nome_smartpms, appartamento_id]);
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+app.post('/api/smartpms/mapping', requireAuth, async (req, res) => {
+  try { const { nome_smartpms, appartamento_id } = req.body; await pool.query(`INSERT INTO smartpms_mapping (nome_smartpms, appartamento_id) VALUES ($1,$2) ON CONFLICT (nome_smartpms) DO UPDATE SET appartamento_id=$2`, [nome_smartpms, appartamento_id]); res.json({ ok: true }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/sync/smartpms', async (req, res) => {
+app.post('/api/sync/smartpms', requireAuth, async (req, res) => {
   try {
     const risultati = { importate: 0, saltate: 0, errori: [] };
-
     if (req.body?.prenotazioni) {
       for (const pren of req.body.prenotazioni) {
         try {
           let appId = pren.appartamento_id;
-          if (!appId) {
-            appId = await trovaTramiteNomeSmartPMS(pren.unit_name || pren.nome_smartpms || '');
-            if (!appId && pren.property_name) appId = await trovaTramiteNomeSmartPMS(pren.property_name);
-            if (!appId) { risultati.errori.push(`Non trovato: "${pren.nome_smartpms}"`); risultati.saltate++; continue; }
-          }
+          if (!appId) { appId = await trovaTramiteNomeSmartPMS(pren.unit_name||pren.nome_smartpms||''); if (!appId && pren.property_name) appId = await trovaTramiteNomeSmartPMS(pren.property_name); if (!appId) { risultati.errori.push(`Non trovato: "${pren.nome_smartpms}"`); risultati.saltate++; continue; } }
           const esistente = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appId, pren.check_in, pren.check_out]);
           if (esistente.rows.length > 0) { risultati.saltate++; continue; }
-          await pool.query(
-            `INSERT INTO prenotazioni (appartamento_id, guest_name, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,$6,'confermata')`,
-            [appId, pren.guest_name || null, pren.check_in, pren.check_out, pren.num_ospiti || 1, pren.note || null]
-          );
+          await pool.query(`INSERT INTO prenotazioni (appartamento_id, guest_name, check_in, check_out, num_ospiti, note, stato) VALUES ($1,$2,$3,$4,$5,$6,'confermata')`, [appId, pren.guest_name||null, pren.check_in, pren.check_out, pren.num_ospiti||1, pren.note||null]);
           risultati.importate++;
         } catch (err) { risultati.errori.push(err.message); }
       }
-      await pool.query(`CREATE TABLE IF NOT EXISTS sync_log (id SERIAL PRIMARY KEY, fonte VARCHAR(50), importate INT, saltate INT, errori TEXT, eseguito_il TIMESTAMP DEFAULT NOW())`).catch(() => {});
-      await pool.query(`INSERT INTO sync_log (fonte, importate, saltate, errori) VALUES ($1,$2,$3,$4)`, ['smartpms', risultati.importate, risultati.saltate, JSON.stringify(risultati.errori)]).catch(() => {});
+      await pool.query(`CREATE TABLE IF NOT EXISTS sync_log (id SERIAL PRIMARY KEY, fonte VARCHAR(50), importate INT, saltate INT, errori TEXT, eseguito_il TIMESTAMP DEFAULT NOW())`).catch(()=>{});
+      await pool.query(`INSERT INTO sync_log (fonte, importate, saltate, errori) VALUES ($1,$2,$3,$4)`, ['smartpms', risultati.importate, risultati.saltate, JSON.stringify(risultati.errori)]).catch(()=>{});
       return res.json(risultati);
     }
-
-    // Sync automatico completo
     const reservations = await fetchSmartPMSReservations();
     const visti = new Set();
     for (const r of reservations) {
       try {
         const { unitName, propertyName, checkIn, checkOut, numOspiti, guestName, cancellata, reservationId } = normalizzaReservationSmartPMS(r);
-        if (!checkIn || !checkOut || cancellata) { risultati.saltate++; continue; }
-        const key = `${reservationId}-${checkIn}-${checkOut}`;
-        if (visti.has(key)) { risultati.saltate++; continue; }
-        visti.add(key);
+        if (!checkIn||!checkOut||cancellata) { risultati.saltate++; continue; }
+        const key=`${reservationId}-${checkIn}-${checkOut}`; if(visti.has(key)){risultati.saltate++;continue;} visti.add(key);
         let appartamento_id = await trovaTramiteNomeSmartPMS(unitName);
         if (!appartamento_id && propertyName) appartamento_id = await trovaTramiteNomeSmartPMS(propertyName);
-        if (!appartamento_id) { risultati.saltate++; const msg = `Non trovato: "${unitName || propertyName}"`; if (!risultati.errori.includes(msg)) risultati.errori.push(msg); continue; }
+        if (!appartamento_id) { risultati.saltate++; const msg=`Non trovato: "${unitName||propertyName}"`; if(!risultati.errori.includes(msg)) risultati.errori.push(msg); continue; }
         const esistente = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, checkIn, checkOut]);
-        if (esistente.rows.length > 0) { await pool.query('UPDATE prenotazioni SET num_ospiti=$1 WHERE id=$2', [numOspiti, esistente.rows[0].id]); risultati.saltate++; }
-        else { await pool.query(`INSERT INTO prenotazioni (appartamento_id, guest_name, check_in, check_out, num_ospiti, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`, [appartamento_id, guestName || null, checkIn, checkOut, numOspiti]); risultati.importate++; }
+        if (esistente.rows.length>0) { await pool.query('UPDATE prenotazioni SET num_ospiti=$1 WHERE id=$2', [numOspiti, esistente.rows[0].id]); risultati.saltate++; }
+        else { await pool.query(`INSERT INTO prenotazioni (appartamento_id, guest_name, check_in, check_out, num_ospiti, stato) VALUES ($1,$2,$3,$4,$5,'confermata')`, [appartamento_id, guestName||null, checkIn, checkOut, numOspiti]); risultati.importate++; }
       } catch (err) { risultati.errori.push(`Errore: ${err.message}`); }
     }
-    await pool.query(`CREATE TABLE IF NOT EXISTS sync_log (id SERIAL PRIMARY KEY, fonte VARCHAR(50), importate INT, saltate INT, errori TEXT, eseguito_il TIMESTAMP DEFAULT NOW())`).catch(() => {});
-    await pool.query(`INSERT INTO sync_log (fonte, importate, saltate, errori) VALUES ($1,$2,$3,$4)`, ['smartpms', risultati.importate, risultati.saltate, JSON.stringify(risultati.errori)]).catch(() => {});
+    await pool.query(`CREATE TABLE IF NOT EXISTS sync_log (id SERIAL PRIMARY KEY, fonte VARCHAR(50), importate INT, saltate INT, errori TEXT, eseguito_il TIMESTAMP DEFAULT NOW())`).catch(()=>{});
+    await pool.query(`INSERT INTO sync_log (fonte, importate, saltate, errori) VALUES ($1,$2,$3,$4)`, ['smartpms', risultati.importate, risultati.saltate, JSON.stringify(risultati.errori)]).catch(()=>{});
     res.json(risultati);
-  } catch (err) {
-    console.error('SmartPMS sync errore:', err.message);
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ============ CRON JOB ============
 const scheduleCron = () => {
   const checkCron = () => {
-    const now = new Date();
-    const h = now.getUTCHours(), m = now.getUTCMinutes();
+    const now = new Date(), h = now.getUTCHours(), m = now.getUTCMinutes();
     if ((h === 2 || h === 7) && m === 0) {
       console.log(`Cron sync avviato alle ${now.toISOString()}`);
       syncItalianway(30).then(r => console.log(`Cron ItalianWay: ${r.importate} importate`)).catch(err => console.error('Cron ItalianWay errore:', err.message));
       syncSmoobu().then(r => console.log(`Cron Smoobu: ${r.importate} importate`)).catch(err => console.error('Cron Smoobu errore:', err.message));
-      fetch(`http://localhost:${port}/api/sync/smartpms`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      fetch(`http://localhost:${port}/api/sync/smartpms`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt.sign({id:0,email:'cron',nome:'cron'}, JWT_SECRET)}` }, body: '{}' })
         .then(r => r.json()).then(r => console.log(`Cron SmartPMS: ${r.importate} importate`)).catch(err => console.error('Cron SmartPMS errore:', err.message));
     }
   };
   setInterval(checkCron, 60000);
-  console.log('Cron job ItalianWay + Smoobu + SmartPMS attivo (02:00 e 07:00 UTC)');
+  console.log('Cron job attivo (02:00 e 07:00 UTC)');
 };
 scheduleCron();
