@@ -525,7 +525,7 @@ function NuovoAppartamento({ onSave }) {
   )
 }
 
-/* ---------- IMPORT (ItalianWay + Email + Sheet + Smoobu + SmartPMS) ---------- */
+/* ---------- IMPORT ---------- */
 function ImportItalianWay({ appartamenti, onImport }) {
   const [file, setFile] = useState(null)
   const [anteprima, setAnteprima] = useState([])
@@ -713,7 +713,7 @@ function ImportItalianWay({ appartamenti, onImport }) {
         <div className="sync-panel-header">
           <div>
             <h3>🏨 Sync da SmartPMS</h3>
-            <p className="sync-desc">Legge le prenotazioni da SmartPMS (CiaoBooking) in automatico.</p>
+            <p className="sync-desc">Legge tutte le prenotazioni da SmartPMS (CiaoBooking) in automatico.</p>
           </div>
           <button className="btn-sync" onClick={async () => {
             setSmartpmsLoading(true); setSmartpmsRisultato(null); setSmartpmsAnteprima([]);
@@ -766,7 +766,14 @@ function ImportItalianWay({ appartamenti, onImport }) {
                         checked={smartpmsAnteprima.filter(p => !p.esistente).length > 0 && smartpmsAnteprima.filter(p => !p.esistente).every((_, idx) => { const i = smartpmsAnteprima.indexOf(smartpmsAnteprima.filter(p => !p.esistente)[idx]); return smartpmsSelezione[i] !== false; })}
                         onChange={e => { const s = {}; smartpmsAnteprima.forEach((p, i) => { s[i] = p.esistente ? false : e.target.checked; }); setSmartpmsSelezione(s); }} />
                     </th>
-                    <th>Appartamento SmartPMS</th><th>Match DB</th><th>Ospite</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Stato</th>
+                    <th>Appartamento SmartPMS</th>
+                    <th>Match DB</th>
+                    <th>Ospite</th>
+                    <th>Check-in</th>
+                    <th>Check-out</th>
+                    <th>Ospiti</th>
+                    <th>Note</th>
+                    <th>Stato</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -776,24 +783,50 @@ function ImportItalianWay({ appartamenti, onImport }) {
                         <input type="checkbox" checked={!p.esistente && smartpmsSelezione[i] !== false} disabled={p.esistente}
                           onChange={e => setSmartpmsSelezione(prev => ({ ...prev, [i]: e.target.checked }))} />
                       </td>
-                      <td><strong>{p.nome_smartpms}</strong></td>
+                      <td><strong style={{ fontSize: '12px' }}>{p.nome_smartpms}</strong></td>
                       <td>
-                        {p.appartamento_nome
-                          ? <span className="match-ok">✅ {p.appartamento_nome}</span>
-                          : smartpmsMappingTemp[p.nome_smartpms]
-                          ? <span className="match-ok">🔗 {appartamenti.find(a => String(a.id) === String(smartpmsMappingTemp[p.nome_smartpms]))?.nome}</span>
-                          : <span className="match-ko">⚠️ non mappato</span>
-                        }
+                        {/* Match DB modificabile */}
+                        <select className="edit-input" style={{ fontSize: '11px', minWidth: '140px' }}
+                          value={smartpmsMappingTemp[p.nome_smartpms] || p.appartamento_id || ''}
+                          onChange={e => {
+                            setSmartpmsMappingTemp(prev => ({ ...prev, [p.nome_smartpms]: e.target.value }));
+                            setSmartpmsAnteprima(prev => prev.map((item, idx) =>
+                              idx === i ? { ...item, appartamento_id: parseInt(e.target.value) || null, appartamento_nome: appartamenti.find(a => String(a.id) === e.target.value)?.nome || null, mappato: !!e.target.value } : item
+                            ));
+                          }}>
+                          {!p.appartamento_id && !smartpmsMappingTemp[p.nome_smartpms] && <option value="">⚠️ non trovato</option>}
+                          {appartamenti.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
+                        </select>
+                        {(smartpmsMappingTemp[p.nome_smartpms] || p.appartamento_nome) && (
+                          <div style={{ fontSize: '10px', color: '#16a34a', marginTop: '2px' }}>
+                            ✅ {appartamenti.find(a => String(a.id) === String(smartpmsMappingTemp[p.nome_smartpms] || p.appartamento_id))?.nome || p.appartamento_nome}
+                          </div>
+                        )}
                       </td>
                       <td style={{ fontSize: '12px' }}>{p.guest_name || '—'}</td>
-                      <td>{p.check_in}</td>
-                      <td>{p.check_out}</td>
+                      <td style={{ fontSize: '12px' }}>{p.check_in}</td>
+                      <td style={{ fontSize: '12px' }}>{p.check_out}</td>
                       <td>
                         <input type="number" min="1" max="20" className="edit-input" style={{ width: '60px', textAlign: 'center' }}
                           value={smartpmsOspitiOverride[i] ?? p.num_ospiti ?? 1}
                           onChange={e => setSmartpmsOspitiOverride(prev => ({ ...prev, [i]: parseInt(e.target.value) || 1 }))} />
                       </td>
-                      <td>{p.esistente ? <span style={{ color: '#777', fontSize: '12px' }}>già presente</span> : <span style={{ color: '#16a34a', fontSize: '12px' }}>da importare</span>}</td>
+                      <td>
+                        {/* Note editabile */}
+                        <input type="text" className="edit-input" style={{ width: '120px', fontSize: '11px' }}
+                          placeholder="Aggiungi nota..."
+                          value={p.note || ''}
+                          onChange={e => {
+                            setSmartpmsAnteprima(prev => prev.map((item, idx) =>
+                              idx === i ? { ...item, note: e.target.value } : item
+                            ));
+                          }} />
+                      </td>
+                      <td>
+                        {p.esistente
+                          ? <span style={{ color: '#777', fontSize: '12px' }}>già presente</span>
+                          : <span style={{ color: '#16a34a', fontSize: '12px' }}>da importare</span>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -803,7 +836,7 @@ function ImportItalianWay({ appartamenti, onImport }) {
             <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
               <button className="btn-import" disabled={smartpmsLoading} onClick={async () => {
                 setSmartpmsLoading(true);
-                // Salva mapping prima
+                // Salva mapping
                 for (const [nome, appId] of Object.entries(smartpmsMappingTemp)) {
                   if (appId) await fetch(`${API_URL}/smartpms/mapping`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome_smartpms: nome, appartamento_id: parseInt(appId) }) }).catch(() => {});
                 }
@@ -811,7 +844,11 @@ function ImportItalianWay({ appartamenti, onImport }) {
                   .filter((p, i) => smartpmsSelezione[i] !== false && !p.esistente)
                   .map((p, _) => {
                     const i = smartpmsAnteprima.indexOf(p);
-                    return { ...p, num_ospiti: smartpmsOspitiOverride[i] ?? p.num_ospiti ?? 1, appartamento_id: smartpmsMappingTemp[p.nome_smartpms] ? parseInt(smartpmsMappingTemp[p.nome_smartpms]) : p.appartamento_id };
+                    return {
+                      ...p,
+                      num_ospiti: smartpmsOspitiOverride[i] ?? p.num_ospiti ?? 1,
+                      appartamento_id: smartpmsMappingTemp[p.nome_smartpms] ? parseInt(smartpmsMappingTemp[p.nome_smartpms]) : p.appartamento_id
+                    };
                   });
                 try {
                   const res = await fetch(`${API_URL}/sync/smartpms`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prenotazioni: daImportare }) });
@@ -912,7 +949,7 @@ function ImportItalianWay({ appartamenti, onImport }) {
       {/* SYNC EMAIL */}
       <div className="sync-panel" style={{ marginTop: '16px' }}>
         <div className="sync-panel-header">
-          <div><h3>📧 Sync da Email</h3><p className="sync-desc">Legge le email con label pl2-importa/pl2-cancella/pl2-aggiungi e mostra anteprima.{' '}<a href="https://gestione-prenotazioni-production.up.railway.app/auth/google" target="_blank" rel="noreferrer" style={{color:'#2d5a3d'}}>Autorizza Gmail →</a></p></div>
+          <div><h3>📧 Sync da Email</h3><p className="sync-desc">Legge le email con label pl2-importa/pl2-cancella/pl2-aggiungi.{' '}<a href="https://gestione-prenotazioni-production.up.railway.app/auth/google" target="_blank" rel="noreferrer" style={{color:'#2d5a3d'}}>Autorizza Gmail →</a></p></div>
           <button className="btn-sync" onClick={leggiEmailAnteprima} disabled={syncingEmail || importandoEmail}>{syncingEmail ? '⏳ Lettura...' : '📧 Leggi email ora'}</button>
         </div>
         {syncingEmail && <div className="sync-loading"><div className="sync-spinner" />Lettura e analisi email in corso...</div>}
