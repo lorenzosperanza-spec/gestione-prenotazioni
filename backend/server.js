@@ -801,12 +801,15 @@ const fetchSmartPMSReservations = async () => {
   let tuttePrenotazioni = [], pagina = 1;
   while (true) {
     const url = `https://pms-api.smartness.com/api/3.0/reservations/paginated?page=${pagina}&perPage=100&order=desc&sortBy=created_at&from=${da.toISOString().slice(0,10)}&to=${a.toISOString().slice(0,10)}`;
+    console.log(`SmartPMS fetch: ${url}`);
     const res = await fetch(url, { headers });
     if (res.status === 401) { smartpmsTokenCache = { token: null, expiresAt: null }; throw new Error('Token SmartPMS scaduto'); }
-    if (!res.ok) throw new Error(`Errore API SmartPMS: ${res.status}`);
+    if (!res.ok) { const t = await res.text().catch(()=>''); throw new Error(`Errore SmartPMS: ${res.status} ${t.slice(0,200)}`); }
     const data = await res.json();
+    console.log(`SmartPMS risposta: keys=${Object.keys(data).join(',')} data_len=${Array.isArray(data.data)?data.data.length:'N/A'} meta=${JSON.stringify(data.meta||{})}`);
     let items = data.data || (Array.isArray(data) ? data : []);
     if (!Array.isArray(items)) items = [];
+    console.log(`SmartPMS pagina ${pagina}: ${items.length} items`);
     for (const item of items) tuttePrenotazioni.push(item);
     const meta = data.meta || {};
     const totalPages = meta.lastPage || meta.last_page || 1;
