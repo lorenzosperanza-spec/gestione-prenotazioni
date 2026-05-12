@@ -805,8 +805,9 @@ const fetchSmartPMSReservations = async () => {
     if (res.status === 401) { smartpmsTokenCache = { token: null, expiresAt: null }; throw new Error('Token SmartPMS scaduto'); }
     if (!res.ok) throw new Error(`Errore API SmartPMS: ${res.status}`);
     const data = await res.json();
-    const items = data.data || (Array.isArray(data) ? data : []);
-    tuttePrenotazioni.push(...items);
+    let items = data.data || (Array.isArray(data) ? data : []);
+    if (!Array.isArray(items)) items = [];
+    for (const item of items) tuttePrenotazioni.push(item);
     const meta = data.meta || {};
     const totalPages = meta.lastPage || meta.last_page || 1;
     if (pagina >= totalPages || items.length < 100) break;
@@ -912,18 +913,19 @@ app.post('/api/sync/smartpms', requireAuth, async (req, res) => {
 });
 
 // ============ CRON JOB ============
+// ============ CRON JOB — Solo ItalianWay automatico ============
+// Smoobu e SmartPMS solo manuale tramite pulsante
 const scheduleCron = () => {
   const checkCron = () => {
     const now = new Date(), h = now.getUTCHours(), m = now.getUTCMinutes();
     if ((h === 2 || h === 7) && m === 0) {
-      console.log(`Cron sync avviato alle ${now.toISOString()}`);
-      syncItalianway(30).then(r => console.log(`Cron ItalianWay: ${r.importate} importate`)).catch(err => console.error('Cron ItalianWay errore:', err.message));
-      syncSmoobu().then(r => console.log(`Cron Smoobu: ${r.importate} importate`)).catch(err => console.error('Cron Smoobu errore:', err.message));
-      fetch(`http://localhost:${port}/api/sync/smartpms`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt.sign({id:0,email:'cron',nome:'cron'}, JWT_SECRET)}` }, body: '{}' })
-        .then(r => r.json()).then(r => console.log(`Cron SmartPMS: ${r.importate} importate`)).catch(err => console.error('Cron SmartPMS errore:', err.message));
+      console.log(`Cron ItalianWay avviato alle ${now.toISOString()}`);
+      syncItalianway(30)
+        .then(r => console.log(`Cron ItalianWay: ${r.importate} importate, ${r.saltate} saltate`))
+        .catch(err => console.error('Cron ItalianWay errore:', err.message));
     }
   };
   setInterval(checkCron, 60000);
-  console.log('Cron job attivo (02:00 e 07:00 UTC)');
+  console.log('Cron job attivo — solo ItalianWay (02:00 e 07:00 UTC)');
 };
 scheduleCron();
