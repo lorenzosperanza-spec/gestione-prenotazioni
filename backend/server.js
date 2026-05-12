@@ -800,7 +800,7 @@ const fetchSmartPMSReservations = async () => {
   da.setDate(da.getDate() - 7); a.setDate(a.getDate() + 180);
   let tuttePrenotazioni = [], pagina = 1;
   while (true) {
-    const url = `https://pms-api.smartness.com/api/3.0/reservations/paginated?page=${pagina}&perPage=100&order=asc&sortBy=start_date&from=${da.toISOString().slice(0,10)}&to=${a.toISOString().slice(0,10)}&status=confirmed`;
+    const url = `https://pms-api.smartness.com/api/3.0/reservations/paginated?page=${pagina}&perPage=100&order=desc&sortBy=created_at&from=${da.toISOString().slice(0,10)}&to=${a.toISOString().slice(0,10)}`;
     const res = await fetch(url, { headers });
     if (res.status === 401) { smartpmsTokenCache = { token: null, expiresAt: null }; throw new Error('Token SmartPMS scaduto'); }
     if (!res.ok) throw new Error(`Errore API SmartPMS: ${res.status}`);
