@@ -3,30 +3,119 @@ import './App.css'
 
 const API_URL = 'https://gestione-prenotazioni-production.up.railway.app/api';
 
+// ============ AUTH HELPERS ============
+const getToken = () => localStorage.getItem('cg_token');
+const setToken = (t) => localStorage.setItem('cg_token', t);
+const removeToken = () => localStorage.removeItem('cg_token');
+const authHeaders = () => ({ 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` });
+
+// ============ LOGIN PAGE ============
+function LoginPage({ onLogin }) {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [errore, setErrore] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault(); if (loading) return;
+    setErrore(''); setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/auth/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await res.json();
+      if (!res.ok) { setErrore(data.error || 'Credenziali non valide'); return; }
+      setToken(data.token);
+      onLogin(data.utente);
+    } catch { setErrore('Errore di connessione. Riprova.'); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="login-page">
+      <div className="login-box">
+        <div className="login-logo">🏠</div>
+        <h1 className="login-title">Cleanergo Platform</h1>
+        <p className="login-subtitle">Accedi per continuare</p>
+        <form onSubmit={handleSubmit} className="login-form">
+          {errore && <div className="login-error">⚠️ {errore}</div>}
+          <div className="form-group">
+            <label>Email</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+              placeholder="La tua email" required autoFocus autoComplete="email" />
+          </div>
+          <div className="form-group">
+            <label>Password</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+              placeholder="La tua password" required autoComplete="current-password" />
+          </div>
+          <button type="submit" className="btn-login" disabled={loading}>
+            {loading ? '⏳ Accesso...' : '🔐 Accedi'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ============ APP PRINCIPALE ============
 function App() {
+  const [utente, setUtente] = useState(null)
   const [appartamenti, setAppartamenti] = useState([])
   const [prenotazioni, setPrenotazioni] = useState([])
   const [dipendenti, setDipendenti] = useState([])
   const [vista, setVista] = useState('dashboard')
   const [loading, setLoading] = useState(true)
+  const [authChecked, setAuthChecked] = useState(false)
 
-  useEffect(() => { caricaDati() }, [])
+  useEffect(() => { verificaAuth() }, [])
+
+  const verificaAuth = async () => {
+    const token = getToken();
+    if (!token) { setAuthChecked(true); setLoading(false); return; }
+    try {
+      const res = await fetch(`${API_URL}/auth/me`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (res.ok) { const data = await res.json(); setUtente(data.utente); await caricaDati(); }
+      else { removeToken(); }
+    } catch { removeToken(); }
+    finally { setAuthChecked(true); setLoading(false); }
+  }
 
   const caricaDati = async () => {
     try {
       const [appRes, prenRes, dipRes] = await Promise.all([
-        fetch(`${API_URL}/appartamenti`),
-        fetch(`${API_URL}/prenotazioni`),
-        fetch(`${API_URL}/dipendenti`)
-      ])
-      setAppartamenti(await appRes.json())
-      setPrenotazioni(await prenRes.json())
-      setDipendenti(await dipRes.json())
-    } catch (err) { console.error('Errore caricamento dati:', err) }
-    finally { setLoading(false) }
+        fetch(`${API_URL}/appartamenti`, { headers: authHeaders() }),
+        fetch(`${API_URL}/prenotazioni`, { headers: authHeaders() }),
+        fetch(`${API_URL}/dipendenti`, { headers: authHeaders() })
+      ]);
+      if (appRes.status === 401) { handleLogout(); return; }
+      setAppartamenti(await appRes.json());
+      setPrenotazioni(await prenRes.json());
+      setDipendenti(await dipRes.json());
+    } catch (err) { console.error('Errore caricamento dati:', err); }
   }
 
-  if (loading) return <div className="loading">Caricamento...</div>
+  const handleLogin = async (utenteData) => {
+    setUtente(utenteData);
+    setLoading(true);
+    await caricaDati();
+    setLoading(false);
+  }
+
+  const handleLogout = async () => {
+    try { await fetch(`${API_URL}/auth/logout`, { method: 'POST', headers: authHeaders() }); } catch {}
+    removeToken(); setUtente(null); setAppartamenti([]); setPrenotazioni([]); setDipendenti([]); setVista('dashboard');
+  }
+
+  if (!authChecked || loading) return (
+    <div className="loading-screen">
+      <div className="loading-spinner" />
+      <p>Caricamento...</p>
+    </div>
+  )
+
+  if (!utente) return <LoginPage onLogin={handleLogin} />
 
   return (
     <div className="app">
@@ -37,10 +126,14 @@ function App() {
           <button className={vista === 'appartamenti' ? 'active' : ''} onClick={() => setVista('appartamenti')}>Appartamenti ({appartamenti.length})</button>
           <button className={vista === 'prenotazioni' ? 'active' : ''} onClick={() => setVista('prenotazioni')}>Prenotazioni ({prenotazioni.length})</button>
           <button className={vista === 'dipendenti' ? 'active' : ''} onClick={() => setVista('dipendenti')}>Dipendenti ({dipendenti.length})</button>
-          <button className={vista === 'nuova' ? 'active' : ''} onClick={() => setVista('nuova')}>+ Nuova Prenotazione</button>
-          <button className={vista === 'nuovo_app' ? 'active' : ''} onClick={() => setVista('nuovo_app')}>+ Nuovo Appartamento</button>
+          <button className={vista === 'nuova' ? 'active' : ''} onClick={() => setVista('nuova')}>+ Nuova</button>
+          <button className={vista === 'nuovo_app' ? 'active' : ''} onClick={() => setVista('nuovo_app')}>+ Appartamento</button>
           <button className={vista === 'import' ? 'active' : ''} onClick={() => setVista('import')}>⬆ Import</button>
         </nav>
+        <div className="header-user">
+          <span className="user-badge">👤 {utente.nome || utente.email.split('@')[0]}</span>
+          <button className="btn-logout" onClick={handleLogout}>🚪 Esci</button>
+        </div>
       </header>
       <main className="main">
         {vista === 'dashboard' && <Dashboard prenotazioni={prenotazioni} dipendenti={dipendenti} caricaDati={caricaDati} />}
@@ -100,12 +193,12 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
 
   const salvaAssegnazione = async (prenId, dipId) => {
     setAssegnazioni(prev => ({ ...prev, [prenId]: dipId }))
-    try { await fetch(`${API_URL}/prenotazioni/${prenId}/assegna`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dipendente_id: dipId || null }) }) }
+    try { await fetch(`${API_URL}/prenotazioni/${prenId}/assegna`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ dipendente_id: dipId || null }) }) }
     catch (err) { console.error('Errore assegnazione:', err) }
   }
 
   const salvaStatoPulizia = async (prenId, stato, nuovaData) => {
-    try { await fetch(`${API_URL}/prenotazioni/${prenId}/stato-pulizia`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stato_pulizia: stato, nuova_data: nuovaData }) }); caricaDati() }
+    try { await fetch(`${API_URL}/prenotazioni/${prenId}/stato-pulizia`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ stato_pulizia: stato, nuova_data: nuovaData }) }); caricaDati() }
     catch (err) { console.error('Errore stato pulizia:', err) }
   }
 
@@ -122,7 +215,7 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
 
     const salvaNota = async () => {
       try {
-        await fetch(`${API_URL}/prenotazioni/${p.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...p, appartamento_id: p.appartamento_id, note: noteText }) })
+        await fetch(`${API_URL}/prenotazioni/${p.id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ ...p, appartamento_id: p.appartamento_id, note: noteText }) })
         caricaDati(); setEditNote(false)
       } catch (err) { console.error('Errore salvataggio nota:', err) }
     }
@@ -259,20 +352,20 @@ function ListaDipendenti({ dipendenti, onUpdate }) {
   const salvaModifica = async (id) => {
     if (saving) return; setSaving(true)
     try {
-      const res = await fetch(`${API_URL}/dipendenti/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formModifica) })
+      const res = await fetch(`${API_URL}/dipendenti/${id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(formModifica) })
       if (res.ok) { setModificaId(null); onUpdate() } else { const d = await res.json().catch(() => ({})); alert(d.error || 'Errore') }
     } catch { alert('Errore di connessione') } finally { setSaving(false) }
   }
   const elimina = async (id, nome) => {
     if (!confirm(`Eliminare "${nome}"?`)) return
-    try { const res = await fetch(`${API_URL}/dipendenti/${id}`, { method: 'DELETE' }); if (res.ok) onUpdate(); else { const d = await res.json().catch(() => ({})); alert(d.error || 'Errore') } }
+    try { const res = await fetch(`${API_URL}/dipendenti/${id}`, { method: 'DELETE', headers: authHeaders() }); if (res.ok) onUpdate(); else { const d = await res.json().catch(() => ({})); alert(d.error || 'Errore') } }
     catch { alert('Errore di connessione') }
   }
   const salvanuovo = async () => {
     if (saving) return; if (!formNuovo.nome_cognome.trim()) { setErrore('Il nome è obbligatorio'); return }
     setErrore(''); setSaving(true)
     try {
-      const res = await fetch(`${API_URL}/dipendenti`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formNuovo) })
+      const res = await fetch(`${API_URL}/dipendenti`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(formNuovo) })
       if (res.ok) { setShowNuovo(false); setFormNuovo({ nome_cognome: '', ore_settimanali: '', patente: false }); onUpdate() }
       else { const d = await res.json().catch(() => ({})); setErrore(d.error || 'Errore') }
     } catch { setErrore('Errore di connessione') } finally { setSaving(false) }
@@ -328,13 +421,13 @@ function ListaAppartamenti({ appartamenti, onUpdate }) {
   const salvaModifica = async (id) => {
     if (saving) return; setSaving(true)
     try {
-      const res = await fetch(`${API_URL}/appartamenti/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formModifica) })
+      const res = await fetch(`${API_URL}/appartamenti/${id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(formModifica) })
       if (res.ok) { setModificaId(null); onUpdate() } else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore') }
     } catch { alert('Errore di connessione') } finally { setSaving(false) }
   }
   const eliminaAppartamento = async (id, nome) => {
     if (!confirm(`Eliminare "${nome}"?`)) return
-    try { const res = await fetch(`${API_URL}/appartamenti/${id}`, { method: 'DELETE' }); if (res.ok) onUpdate(); else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore') } }
+    try { const res = await fetch(`${API_URL}/appartamenti/${id}`, { method: 'DELETE', headers: authHeaders() }); if (res.ok) onUpdate(); else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore') } }
     catch { alert('Errore di connessione') }
   }
   const aggiornaField = (field, value) => setFormModifica(prev => ({ ...prev, [field]: value }))
@@ -383,40 +476,27 @@ function ListaPrenotazioni({ prenotazioni, appartamenti, onUpdate }) {
   const salvaModifica = async (id) => {
     if (saving) return; setSaving(true)
     try {
-      const res = await fetch(`${API_URL}/prenotazioni/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formModifica) })
+      const res = await fetch(`${API_URL}/prenotazioni/${id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(formModifica) })
       if (res.ok) { setModificaId(null); onUpdate() } else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore') }
     } catch { alert('Errore di connessione') } finally { setSaving(false) }
   }
   const eliminaPrenotazione = async (id) => {
     if (!confirm('Eliminare questa prenotazione?')) return
-    try { await fetch(`${API_URL}/prenotazioni/${id}`, { method: 'DELETE' }); onUpdate() } catch { console.error('Errore eliminazione') }
+    try { await fetch(`${API_URL}/prenotazioni/${id}`, { method: 'DELETE', headers: authHeaders() }); onUpdate() } catch { console.error('Errore eliminazione') }
   }
   const upd = (field, value) => setFormModifica(prev => ({ ...prev, [field]: value }))
   const hasFiltri = filtroAppartamento || filtroStato || filtroData
 
   return (
     <div className="lista-prenotazioni">
-      <div className="section-header">
-        <h2>Prenotazioni</h2>
-        <span className="count-badge">{prenotazioniFiltrate.length} / {prenotazioni.length}</span>
-      </div>
+      <div className="section-header"><h2>Prenotazioni</h2><span className="count-badge">{prenotazioniFiltrate.length} / {prenotazioni.length}</span></div>
       <div className="filtri-bar">
         <input type="text" placeholder="🔍 Cerca appartamento..." value={filtroAppartamento} onChange={e => setFiltroAppartamento(e.target.value)} className="search-input filtro-input" />
-        <select value={filtroStato} onChange={e => setFiltroStato(e.target.value)} className="filtro-select">
-          <option value="">Tutti gli stati</option>
-          <option value="confermata">Confermata</option>
-          <option value="in_attesa">In attesa</option>
-          <option value="cancellata">Cancellata</option>
-        </select>
-        <div className="filtro-data-group">
-          <label className="filtro-data-label">Attive il:</label>
-          <input type="date" value={filtroData} onChange={e => setFiltroData(e.target.value)} className="filtro-date" />
-        </div>
+        <select value={filtroStato} onChange={e => setFiltroStato(e.target.value)} className="filtro-select"><option value="">Tutti gli stati</option><option value="confermata">Confermata</option><option value="in_attesa">In attesa</option><option value="cancellata">Cancellata</option></select>
+        <div className="filtro-data-group"><label className="filtro-data-label">Attive il:</label><input type="date" value={filtroData} onChange={e => setFiltroData(e.target.value)} className="filtro-date" /></div>
         {hasFiltri && <button className="btn-reset-filtri" onClick={() => { setFiltroAppartamento(''); setFiltroStato(''); setFiltroData('') }}>✕ Reset</button>}
       </div>
-      {prenotazioniFiltrate.length === 0 ? (
-        <p className="empty-message">{hasFiltri ? 'Nessuna prenotazione corrisponde ai filtri' : 'Nessuna prenotazione presente'}</p>
-      ) : (
+      {prenotazioniFiltrate.length === 0 ? <p className="empty-message">{hasFiltri ? 'Nessuna prenotazione corrisponde ai filtri' : 'Nessuna prenotazione presente'}</p> : (
         <div className="table-container">
           <table>
             <thead><tr><th>Appartamento</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Note</th><th>Stato</th><th>Azioni</th></tr></thead>
@@ -448,7 +528,7 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
   const handleSubmit = async (e) => {
     e.preventDefault(); if (saving) return; setSaving(true)
     try {
-      const res = await fetch(`${API_URL}/prenotazioni`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
+      const res = await fetch(`${API_URL}/prenotazioni`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(form) })
       if (res.ok) { onSave() } else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore'); setSaving(false) }
     } catch { alert('Errore di connessione'); setSaving(false) }
   }
@@ -456,7 +536,7 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
   const handleSubmitSpot = async (e) => {
     e.preventDefault(); if (saving) return; setSaving(true)
     try {
-      const res = await fetch(`${API_URL}/prenotazioni`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ appartamento_id: formSpot.appartamento_id, check_in: formSpot.data, check_out: formSpot.data, num_ospiti: formSpot.num_ospiti, note: formSpot.note, tipo: 'spot', stato: 'confermata' }) })
+      const res = await fetch(`${API_URL}/prenotazioni`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ appartamento_id: formSpot.appartamento_id, check_in: formSpot.data, check_out: formSpot.data, num_ospiti: formSpot.num_ospiti, note: formSpot.note, tipo: 'spot', stato: 'confermata' }) })
       if (res.ok) { onSave() } else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore'); setSaving(false) }
     } catch { alert('Errore di connessione'); setSaving(false) }
   }
@@ -486,7 +566,7 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
           <div className="form-group"><label>Appartamento *</label><select required value={formSpot.appartamento_id} onChange={e => setFormSpot({ ...formSpot, appartamento_id: e.target.value })}><option value="">Seleziona appartamento...</option>{appartamenti.map(a => <option key={a.id} value={a.id}>{a.nome} - {a.via}</option>)}</select></div>
           <div className="form-group"><label>Data pulizia *</label><input type="date" required value={formSpot.data} onChange={e => setFormSpot({ ...formSpot, data: e.target.value })} /></div>
           <div className="form-group"><label>Numero ospiti da preparare</label><input type="number" min="1" value={formSpot.num_ospiti} onChange={e => setFormSpot({ ...formSpot, num_ospiti: parseInt(e.target.value) })} /></div>
-          <div className="form-group"><label>Note</label><textarea value={formSpot.note} onChange={e => setFormSpot({ ...formSpot, note: e.target.value })} placeholder="Es. pulire anche balcone, cambiare lenzuola..." /></div>
+          <div className="form-group"><label>Note</label><textarea value={formSpot.note} onChange={e => setFormSpot({ ...formSpot, note: e.target.value })} placeholder="Es. pulire anche balcone..." /></div>
           <button type="submit" className="btn-save" disabled={saving}>{saving ? 'Salvataggio...' : '🧹 Salva Pulizia Spot'}</button>
         </form>
       )}
@@ -503,7 +583,7 @@ function NuovoAppartamento({ onSave }) {
   const handleSubmit = async (e) => {
     e.preventDefault(); if (saving) return; setErrore(''); setSaving(true)
     try {
-      const res = await fetch(`${API_URL}/appartamenti`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
+      const res = await fetch(`${API_URL}/appartamenti`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(form) })
       if (res.ok) { onSave() } else { const data = await res.json().catch(() => ({})); setErrore(data.error || 'Errore'); setSaving(false) }
     } catch { setErrore('Errore di connessione'); setSaving(false) }
   }
@@ -541,8 +621,6 @@ function ImportItalianWay({ appartamenti, onImport }) {
   const [emailMatchOverride, setEmailMatchOverride] = useState({})
   const [importandoEmail, setImportandoEmail] = useState(false)
   const [selezionate, setSelezionate] = useState({})
-
-  // Smoobu
   const [smoobuFile, setSmoobuFile] = useState(null)
   const [smoobuAnteprima, setSmoobuAnteprima] = useState([])
   const [smoobuLoading, setSmoobuLoading] = useState(false)
@@ -551,8 +629,6 @@ function ImportItalianWay({ appartamenti, onImport }) {
   const [smoobuMappingTemp, setSmoobuMappingTemp] = useState({})
   const [smoobuSelezione, setSmoobuSelezione] = useState({})
   const [smoobuOspitiOverride, setSmoobuOspitiOverride] = useState({})
-
-  // Google Sheet
   const [sheetLoading, setSheetLoading] = useState(false)
   const [sheetAnteprima, setSheetAnteprima] = useState(null)
   const [sheetRisultato, setSheetRisultato] = useState(null)
@@ -560,8 +636,6 @@ function ImportItalianWay({ appartamenti, onImport }) {
   const [sheetTabSelezionato, setSheetTabSelezionato] = useState('')
   const [sheetSelezione, setSheetSelezione] = useState({})
   const [sheetMatchOverride, setSheetMatchOverride] = useState({})
-
-  // SmartPMS
   const [smartpmsLoading, setSmartpmsLoading] = useState(false)
   const [smartpmsAnteprima, setSmartpmsAnteprima] = useState([])
   const [smartpmsRisultato, setSmartpmsRisultato] = useState(null)
@@ -570,18 +644,18 @@ function ImportItalianWay({ appartamenti, onImport }) {
   const [smartpmsOspitiOverride, setSmartpmsOspitiOverride] = useState({})
 
   useEffect(() => { caricaSyncLog() }, [])
-  const caricaSyncLog = async () => { try { const res = await fetch(`${API_URL}/sync/status`); setSyncLog(await res.json()) } catch {} }
+  const caricaSyncLog = async () => { try { const res = await fetch(`${API_URL}/sync/status`, { headers: authHeaders() }); setSyncLog(await res.json()) } catch {} }
 
   const eseguiSync = async (giorni = 30) => {
     setSyncing(true); setSyncStatus(null)
-    try { const res = await fetch(`${API_URL}/sync/italianway?giorni=${giorni}`, { method: 'POST' }); const data = await res.json(); setSyncStatus(data); caricaSyncLog(); if (data.importate > 0) setTimeout(() => onImport(), 1500) }
+    try { const res = await fetch(`${API_URL}/sync/italianway?giorni=${giorni}`, { method: 'POST', headers: authHeaders() }); const data = await res.json(); setSyncStatus(data); caricaSyncLog(); if (data.importate > 0) setTimeout(() => onImport(), 1500) }
     catch (err) { setSyncStatus({ error: 'Errore: ' + err.message }) } finally { setSyncing(false) }
   }
 
   const leggiEmailAnteprima = async () => {
     setSyncingEmail(true); setSyncEmailStatus(null); setAnteprimaEmail(null); setSelezionate({})
     try {
-      const res = await fetch(`${API_URL}/sync/email/preview`, { method: 'POST' })
+      const res = await fetch(`${API_URL}/sync/email/preview`, { method: 'POST', headers: authHeaders() })
       const data = await res.json()
       if (data.errore) { setSyncEmailStatus({ errore: data.errore }) }
       else if (!data.prenotazioni || data.prenotazioni.length === 0) { setSyncEmailStatus({ messaggio: 'Nessuna prenotazione trovata nelle email.' }) }
@@ -596,7 +670,7 @@ function ImportItalianWay({ appartamenti, onImport }) {
       return emailMatchOverride[i] ? { ...p, appartamento_id_override: parseInt(emailMatchOverride[i]) } : p
     })
     try {
-      const res = await fetch(`${API_URL}/sync/email/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prenotazioni: prenotazioniDaImportare, msgIds: anteprimaEmail.msgIds, labelIds: anteprimaEmail.labelIds }) })
+      const res = await fetch(`${API_URL}/sync/email/confirm`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ prenotazioni: prenotazioniDaImportare, msgIds: anteprimaEmail.msgIds, labelIds: anteprimaEmail.labelIds }) })
       const data = await res.json(); setAnteprimaEmail(null); setSyncEmailStatus(data); setEmailMatchOverride({})
       if (data.importate > 0 || data.cancellate > 0) onImport()
     } catch (err) { setSyncEmailStatus({ errore: 'Errore: ' + err.message }) } finally { setImportandoEmail(false) }
@@ -607,7 +681,7 @@ function ImportItalianWay({ appartamenti, onImport }) {
   const smoobuDateToISO = (v) => {
     if (!v) return null
     const m = v.trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/)
-    if (m) { const dd = m[1].padStart(2, '0'), mm = m[2].padStart(2, '0'), yy = m[3].length === 2 ? `20${m[3]}` : m[3]; return `${yy}-${mm}-${dd}` }
+    if (m) { const dd = m[1].padStart(2,'0'), mm = m[2].padStart(2,'0'), yy = m[3].length===2?`20${m[3]}`:m[3]; return `${yy}-${mm}-${dd}` }
     return null
   }
 
@@ -618,30 +692,30 @@ function ImportItalianWay({ appartamenti, onImport }) {
       try {
         const text = e.target.result, lines = text.split('\n').filter(l => l.trim())
         if (lines.length < 2) { setSmoobuErrore('File vuoto'); return }
-        const headers = lines[0].replace(/^\uFEFF/, '').split(';').map(h => h.replace(/"/g, '').trim())
+        const headers = lines[0].replace(/^\uFEFF/,'').split(';').map(h => h.replace(/"/g,'').trim())
         const idxOf = (name) => headers.findIndex(h => h.toLowerCase().includes(name.toLowerCase()))
-        const iApp = idxOf('Proprietà') !== -1 ? idxOf('Proprietà') : idxOf('Propr'), iArrivo = idxOf('Arrivo'), iPartenza = idxOf('Partenza')
-        const iAdulti = idxOf('Adulti'), iBambini = idxOf('Bambini'), iNote = idxOf('Note assistente') !== -1 ? idxOf('Note assistente') : idxOf('Note')
-        const iPortale = idxOf('Portale'), iStato = idxOf('stato')
+        const iApp = idxOf('Proprietà')!==-1?idxOf('Proprietà'):idxOf('Propr'), iArrivo=idxOf('Arrivo'), iPartenza=idxOf('Partenza')
+        const iAdulti=idxOf('Adulti'), iBambini=idxOf('Bambini'), iNote=idxOf('Note assistente')!==-1?idxOf('Note assistente'):idxOf('Note')
+        const iPortale=idxOf('Portale'), iStato=idxOf('stato')
         const righe = lines.slice(1).map(line => {
-          const cols = line.split(';').map(c => c.replace(/"/g, '').trim())
-          if ((cols[iStato] || '').toLowerCase().includes('cancell')) return null
-          const appartamento = cols[iApp] || '', check_in = smoobuDateToISO(cols[iArrivo]), check_out = smoobuDateToISO(cols[iPartenza])
-          if (!appartamento || !check_in || !check_out) return null
-          return { appartamento, check_in, check_out, num_ospiti: (parseInt(cols[iAdulti]) || 0) + (parseInt(cols[iBambini]) || 0) || 1, portale: cols[iPortale] || '', note: cols[iNote] || '' }
+          const cols = line.split(';').map(c => c.replace(/"/g,'').trim())
+          if ((cols[iStato]||'').toLowerCase().includes('cancell')) return null
+          const appartamento=cols[iApp]||'', check_in=smoobuDateToISO(cols[iArrivo]), check_out=smoobuDateToISO(cols[iPartenza])
+          if (!appartamento||!check_in||!check_out) return null
+          return { appartamento, check_in, check_out, num_ospiti:(parseInt(cols[iAdulti])||0)+(parseInt(cols[iBambini])||0)||1, portale:cols[iPortale]||'', note:cols[iNote]||'' }
         }).filter(Boolean)
         setSmoobuAnteprima(righe)
-      } catch (err) { setSmoobuErrore('Errore lettura: ' + err.message) }
+      } catch (err) { setSmoobuErrore('Errore lettura: '+err.message) }
     }
-    reader.readAsText(f, 'utf-8')
+    reader.readAsText(f,'utf-8')
   }
 
-  const handleSmoobuFile = (e) => { const f = e.target.files[0]; if (f) { setSmoobuFile(f); leggiSmoobuCSV(f) } }
+  const handleSmoobuFile = (e) => { const f=e.target.files[0]; if(f){setSmoobuFile(f);leggiSmoobuCSV(f)} }
 
   const excelDateToISO = (v) => {
     if (!v) return null
-    if (typeof v === 'string' && v.match(/^\d{4}-\d{2}-\d{2}/)) return v.slice(0, 10)
-    if (typeof v === 'number') { const ms = (v - 25569) * 86400000; return new Date(ms).toISOString().slice(0, 10) }
+    if (typeof v==='string'&&v.match(/^\d{4}-\d{2}-\d{2}/)) return v.slice(0,10)
+    if (typeof v==='number') { const ms=(v-25569)*86400000; return new Date(ms).toISOString().slice(0,10) }
     return null
   }
 
@@ -650,36 +724,36 @@ function ImportItalianWay({ appartamenti, onImport }) {
     const reader = new FileReader()
     reader.onload = (e) => {
       try {
-        if (typeof XLSX === 'undefined') { setErroreFile('Libreria XLSX non caricata.'); return }
-        const wb = XLSX.read(e.target.result, { type: 'array' }), ws = wb.Sheets[wb.SheetNames[0]], rows = XLSX.utils.sheet_to_json(ws, { header: 1 })
-        let headerIdx = rows.findIndex(r => r.some(c => String(c).includes('API ID')))
-        if (headerIdx === -1) { setErroreFile('Formato non riconosciuto'); return }
-        const headers = rows[headerIdx].map(h => String(h || '').trim())
-        const idxOf = (name) => headers.findIndex(h => h.toLowerCase().includes(name.toLowerCase()))
-        const righe = rows.slice(headerIdx + 1).filter(r => r.length > 2 && r[0]).map(r => ({
-          api_id: r[idxOf('API ID')], appartamento: String(r[idxOf('Appartamento')] || '').trim(),
-          check_out: excelDateToISO(r[idxOf('Data')]), check_in: excelDateToISO(r[idxOf('Prox. check-in')]),
-          ospiti_entranti: parseInt(r[idxOf('Ospiti entranti')]) || 0, ospiti_uscenti: parseInt(r[idxOf('Ospiti uscenti')]) || 0,
-          note: String(r[idxOf('Note')] || '').trim(), categoria: String(r[idxOf('Categoria')] || '').trim(),
-        })).filter(r => r.appartamento && r.check_out)
+        if (typeof XLSX==='undefined') { setErroreFile('Libreria XLSX non caricata.'); return }
+        const wb=XLSX.read(e.target.result,{type:'array'}), ws=wb.Sheets[wb.SheetNames[0]], rows=XLSX.utils.sheet_to_json(ws,{header:1})
+        let headerIdx=rows.findIndex(r=>r.some(c=>String(c).includes('API ID')))
+        if (headerIdx===-1) { setErroreFile('Formato non riconosciuto'); return }
+        const headers=rows[headerIdx].map(h=>String(h||'').trim())
+        const idxOf=(name)=>headers.findIndex(h=>h.toLowerCase().includes(name.toLowerCase()))
+        const righe=rows.slice(headerIdx+1).filter(r=>r.length>2&&r[0]).map(r=>({
+          api_id:r[idxOf('API ID')], appartamento:String(r[idxOf('Appartamento')]||'').trim(),
+          check_out:excelDateToISO(r[idxOf('Data')]), check_in:excelDateToISO(r[idxOf('Prox. check-in')]),
+          ospiti_entranti:parseInt(r[idxOf('Ospiti entranti')])||0, ospiti_uscenti:parseInt(r[idxOf('Ospiti uscenti')])||0,
+          note:String(r[idxOf('Note')]||'').trim(), categoria:String(r[idxOf('Categoria')]||'').trim(),
+        })).filter(r=>r.appartamento&&r.check_out)
         setAnteprima(righe)
-      } catch (err) { setErroreFile('Errore lettura: ' + err.message) }
+      } catch (err) { setErroreFile('Errore lettura: '+err.message) }
     }
     reader.readAsArrayBuffer(f)
   }
 
-  const handleFile = (e) => { const f = e.target.files[0]; if (f) { setFile(f); leggiFile(f) } }
-  const handleDrop = (e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f && f.name.endsWith('.xlsx')) { setFile(f); leggiFile(f) } }
+  const handleFile = (e) => { const f=e.target.files[0]; if(f){setFile(f);leggiFile(f)} }
+  const handleDrop = (e) => { e.preventDefault(); const f=e.dataTransfer.files[0]; if(f&&f.name.endsWith('.xlsx')){setFile(f);leggiFile(f)} }
 
   const eseguiImport = async () => {
     if (!anteprima.length) return; setLoading(true); setRisultato(null)
     try {
-      const res = await fetch(`${API_URL}/import/italianway`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ righe: anteprima }) })
-      const data = await res.json(); setRisultato(data); if (data.importate > 0) setTimeout(() => onImport(), 1500)
-    } catch { setRisultato({ importate: 0, saltate: 0, errori: ['Errore di connessione'] }) } finally { setLoading(false) }
+      const res = await fetch(`${API_URL}/import/italianway`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ righe: anteprima }) })
+      const data = await res.json(); setRisultato(data); if (data.importate>0) setTimeout(()=>onImport(),1500)
+    } catch { setRisultato({ importate:0, saltate:0, errori:['Errore di connessione'] }) } finally { setLoading(false) }
   }
 
-  const fmtData = (d) => { if (!d) return '—'; const [y, m, dd] = d.slice(0, 10).split('-').map(Number); return new Date(y, m - 1, dd).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' }) }
+  const fmtData = (d) => { if(!d) return '—'; const [y,m,dd]=d.slice(0,10).split('-').map(Number); return new Date(y,m-1,dd).toLocaleDateString('it-IT',{day:'numeric',month:'short',year:'numeric'}) }
 
   return (
     <div className="import-italianway">
@@ -691,287 +765,211 @@ function ImportItalianWay({ appartamenti, onImport }) {
         <div className="sync-panel-header">
           <div><h3>🔄 Sync ItalianWay (KALISI)</h3><p className="sync-desc">Attivo automaticamente alle 02:00 e 07:00 UTC.</p></div>
           <div className="sync-buttons">
-            <button className="btn-sync" onClick={() => eseguiSync(14)} disabled={syncing}>{syncing ? '⏳ Sync...' : '🔄 2 settimane'}</button>
-            <button className="btn-sync btn-sync-month" onClick={() => eseguiSync(30)} disabled={syncing}>{syncing ? '⏳ Sync...' : '🔄 1 mese'}</button>
+            <button className="btn-sync" onClick={() => eseguiSync(14)} disabled={syncing}>{syncing?'⏳ Sync...':'🔄 2 settimane'}</button>
+            <button className="btn-sync btn-sync-month" onClick={() => eseguiSync(30)} disabled={syncing}>{syncing?'⏳ Sync...':'🔄 1 mese'}</button>
           </div>
         </div>
-        {syncing && <div className="sync-loading"><div className="sync-spinner" />Connessione a KALISI... 30-60 secondi</div>}
+        {syncing && <div className="sync-loading"><div className="sync-spinner"/>Connessione a KALISI... 30-60 secondi</div>}
         {syncStatus && !syncing && (
-          <div className={`import-result ${syncStatus.error ? 'result-warn' : syncStatus.importate > 0 ? 'result-ok' : 'result-warn'}`}>
-            {syncStatus.error ? <div className="result-row">❌ {syncStatus.error}</div> : <><div className="result-row">✅ Importate: <strong>{syncStatus.importate}</strong></div><div className="result-row">⏭ Saltate: <strong>{syncStatus.saltate}</strong></div></>}
+          <div className={`import-result ${syncStatus.error?'result-warn':syncStatus.importate>0?'result-ok':'result-warn'}`}>
+            {syncStatus.error?<div className="result-row">❌ {syncStatus.error}</div>:<><div className="result-row">✅ Importate: <strong>{syncStatus.importate}</strong></div><div className="result-row">⏭ Saltate: <strong>{syncStatus.saltate}</strong></div></>}
           </div>
         )}
-        {syncLog.length > 0 && (
+        {syncLog.length>0 && (
           <div className="sync-log"><strong>Ultimi sync:</strong>
-            {syncLog.map((s, i) => <div key={i} className="sync-log-row"><span className="sync-log-date">{new Date(s.eseguito_il).toLocaleString('it-IT')}</span><span className="sync-log-fonte">[{s.fonte}]</span><span className="sync-log-ok">✅ {s.importate}</span><span className="sync-log-skip">⏭ {s.saltate}</span></div>)}
+            {syncLog.map((s,i)=><div key={i} className="sync-log-row"><span className="sync-log-date">{new Date(s.eseguito_il).toLocaleString('it-IT')}</span><span className="sync-log-fonte">[{s.fonte}]</span><span className="sync-log-ok">✅ {s.importate}</span><span className="sync-log-skip">⏭ {s.saltate}</span></div>)}
           </div>
         )}
       </div>
 
       {/* SMARTPMS */}
-      <div className="sync-panel" style={{ marginTop: '16px' }}>
+      <div className="sync-panel" style={{marginTop:'16px'}}>
         <div className="sync-panel-header">
-          <div>
-            <h3>🏨 Sync da SmartPMS</h3>
-            <p className="sync-desc">Legge tutte le prenotazioni da SmartPMS (CiaoBooking) in automatico.</p>
-          </div>
-          <button className="btn-sync" onClick={async () => {
+          <div><h3>🏨 Sync da SmartPMS</h3><p className="sync-desc">Legge tutte le prenotazioni da SmartPMS in automatico.</p></div>
+          <button className="btn-sync" onClick={async()=>{
             setSmartpmsLoading(true); setSmartpmsRisultato(null); setSmartpmsAnteprima([]);
             try {
-              const res = await fetch(`${API_URL}/sync/smartpms/anteprima`, { method: 'POST' });
-              const data = await res.json();
-              if (data.errore) { setSmartpmsRisultato({ errori: [data.errore] }); return; }
-              const mappingInit = {};
-              data.prenotazioni.forEach(p => { if (!p.mappato) mappingInit[p.nome_smartpms] = ''; });
+              const res=await fetch(`${API_URL}/sync/smartpms/anteprima`,{method:'POST',headers:authHeaders()});
+              const data=await res.json();
+              if(data.errore){setSmartpmsRisultato({errori:[data.errore]});return;}
+              const mappingInit={}; data.prenotazioni.forEach(p=>{if(!p.mappato)mappingInit[p.nome_smartpms]='';});
               setSmartpmsMappingTemp(mappingInit);
-              const sel = {}; data.prenotazioni.forEach((p, i) => { sel[i] = !p.esistente; }); setSmartpmsSelezione(sel);
-              setSmartpmsOspitiOverride({});
-              setSmartpmsAnteprima(data.prenotazioni || []);
-            } catch (err) { setSmartpmsRisultato({ errori: ['Errore connessione: ' + err.message] }); }
-            finally { setSmartpmsLoading(false); }
+              const sel={}; data.prenotazioni.forEach((p,i)=>{sel[i]=!p.esistente;}); setSmartpmsSelezione(sel);
+              setSmartpmsOspitiOverride({}); setSmartpmsAnteprima(data.prenotazioni||[]);
+            } catch(err){setSmartpmsRisultato({errori:['Errore: '+err.message]});}
+            finally{setSmartpmsLoading(false);}
           }} disabled={smartpmsLoading}>
-            {smartpmsLoading ? '⏳ Caricamento...' : '🏨 Leggi prenotazioni SmartPMS'}
+            {smartpmsLoading?'⏳ Caricamento...':'🏨 Leggi prenotazioni SmartPMS'}
           </button>
         </div>
-
-        {smartpmsLoading && <div className="sync-loading"><div className="sync-spinner" />Connessione a SmartPMS in corso...</div>}
-
-        {smartpmsAnteprima.length > 0 && !smartpmsRisultato && (
-          <div style={{ marginTop: '16px' }}>
-            <h4 style={{ margin: '0 0 12px', color: '#2d5a3d' }}>📋 Anteprima — {smartpmsAnteprima.length} prenotazioni trovate</h4>
-
-            {/* Mapping appartamenti non trovati */}
-            {smartpmsAnteprima.some(p => !p.mappato) && (
-              <div className="import-warning" style={{ marginBottom: '12px' }}>
-                <strong>⚠️ Associa gli appartamenti SmartPMS al gestionale:</strong>
-                {[...new Set(smartpmsAnteprima.filter(p => !p.mappato).map(p => p.nome_smartpms))].map(nome => (
-                  <div key={nome} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
-                    <span style={{ minWidth: '200px', fontWeight: 'bold', fontSize: '13px' }}>"{nome}"</span>
-                    <span>→</span>
-                    <select className="edit-input" style={{ flex: 1 }} value={smartpmsMappingTemp[nome] || ''} onChange={e => setSmartpmsMappingTemp(prev => ({ ...prev, [nome]: e.target.value }))}>
-                      <option value="">Seleziona appartamento...</option>
-                      {appartamenti.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
+        {smartpmsLoading && <div className="sync-loading"><div className="sync-spinner"/>Connessione a SmartPMS...</div>}
+        {smartpmsAnteprima.length>0 && !smartpmsRisultato && (
+          <div style={{marginTop:'16px'}}>
+            <h4 style={{margin:'0 0 12px',color:'#2d5a3d'}}>📋 Anteprima — {smartpmsAnteprima.length} prenotazioni trovate</h4>
+            {smartpmsAnteprima.some(p=>!p.mappato) && (
+              <div className="import-warning" style={{marginBottom:'12px'}}>
+                <strong>⚠️ Associa gli appartamenti SmartPMS:</strong>
+                {[...new Set(smartpmsAnteprima.filter(p=>!p.mappato).map(p=>p.nome_smartpms))].map(nome=>(
+                  <div key={nome} style={{display:'flex',alignItems:'center',gap:'8px',marginTop:'8px'}}>
+                    <span style={{minWidth:'200px',fontWeight:'bold',fontSize:'13px'}}>"{nome}"</span><span>→</span>
+                    <select className="edit-input" style={{flex:1}} value={smartpmsMappingTemp[nome]||''} onChange={e=>setSmartpmsMappingTemp(prev=>({...prev,[nome]:e.target.value}))}>
+                      <option value="">Seleziona...</option>{appartamenti.map(a=><option key={a.id} value={a.id}>{a.nome}</option>)}
                     </select>
                   </div>
                 ))}
               </div>
             )}
-
             <div className="table-container">
               <table>
-                <thead>
-                  <tr>
-                    <th style={{ width: '36px' }}>
-                      <input type="checkbox"
-                        checked={smartpmsAnteprima.filter(p => !p.esistente).length > 0 && smartpmsAnteprima.filter(p => !p.esistente).every((_, idx) => { const i = smartpmsAnteprima.indexOf(smartpmsAnteprima.filter(p => !p.esistente)[idx]); return smartpmsSelezione[i] !== false; })}
-                        onChange={e => { const s = {}; smartpmsAnteprima.forEach((p, i) => { s[i] = p.esistente ? false : e.target.checked; }); setSmartpmsSelezione(s); }} />
-                    </th>
-                    <th>Appartamento SmartPMS</th>
-                    <th>Match DB</th>
-                    <th>Ospite</th>
-                    <th>Check-in</th>
-                    <th>Check-out</th>
-                    <th>Ospiti</th>
-                    <th>Note</th>
-                    <th>Stato</th>
-                  </tr>
-                </thead>
+                <thead><tr>
+                  <th style={{width:'36px'}}><input type="checkbox" onChange={e=>{const s={};smartpmsAnteprima.forEach((p,i)=>{s[i]=p.esistente?false:e.target.checked;});setSmartpmsSelezione(s);}}/></th>
+                  <th>Appartamento SmartPMS</th><th>Match DB</th><th>Ospite</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Note</th><th>Stato</th>
+                </tr></thead>
                 <tbody>
-                  {smartpmsAnteprima.map((p, i) => (
-                    <tr key={i} style={{ opacity: smartpmsSelezione[i] === false || p.esistente ? 0.45 : 1 }}>
+                  {smartpmsAnteprima.map((p,i)=>(
+                    <tr key={i} style={{opacity:smartpmsSelezione[i]===false||p.esistente?0.45:1}}>
+                      <td><input type="checkbox" checked={!p.esistente&&smartpmsSelezione[i]!==false} disabled={p.esistente} onChange={e=>setSmartpmsSelezione(prev=>({...prev,[i]:e.target.checked}))}/></td>
+                      <td><strong style={{fontSize:'12px'}}>{p.nome_smartpms}</strong></td>
                       <td>
-                        <input type="checkbox" checked={!p.esistente && smartpmsSelezione[i] !== false} disabled={p.esistente}
-                          onChange={e => setSmartpmsSelezione(prev => ({ ...prev, [i]: e.target.checked }))} />
-                      </td>
-                      <td><strong style={{ fontSize: '12px' }}>{p.nome_smartpms}</strong></td>
-                      <td>
-                        {/* Match DB modificabile */}
-                        <select className="edit-input" style={{ fontSize: '11px', minWidth: '140px' }}
-                          value={smartpmsMappingTemp[p.nome_smartpms] || p.appartamento_id || ''}
-                          onChange={e => {
-                            setSmartpmsMappingTemp(prev => ({ ...prev, [p.nome_smartpms]: e.target.value }));
-                            setSmartpmsAnteprima(prev => prev.map((item, idx) =>
-                              idx === i ? { ...item, appartamento_id: parseInt(e.target.value) || null, appartamento_nome: appartamenti.find(a => String(a.id) === e.target.value)?.nome || null, mappato: !!e.target.value } : item
-                            ));
+                        <select className="edit-input" style={{fontSize:'11px',minWidth:'140px'}}
+                          value={smartpmsMappingTemp[p.nome_smartpms]||p.appartamento_id||''}
+                          onChange={e=>{
+                            setSmartpmsMappingTemp(prev=>({...prev,[p.nome_smartpms]:e.target.value}));
+                            setSmartpmsAnteprima(prev=>prev.map((item,idx)=>idx===i?{...item,appartamento_id:parseInt(e.target.value)||null,appartamento_nome:appartamenti.find(a=>String(a.id)===e.target.value)?.nome||null,mappato:!!e.target.value}:item));
                           }}>
-                          {!p.appartamento_id && !smartpmsMappingTemp[p.nome_smartpms] && <option value="">⚠️ non trovato</option>}
-                          {appartamenti.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
+                          {!p.appartamento_id&&!smartpmsMappingTemp[p.nome_smartpms]&&<option value="">⚠️ non trovato</option>}
+                          {appartamenti.map(a=><option key={a.id} value={a.id}>{a.nome}</option>)}
                         </select>
-                        {(smartpmsMappingTemp[p.nome_smartpms] || p.appartamento_nome) && (
-                          <div style={{ fontSize: '10px', color: '#16a34a', marginTop: '2px' }}>
-                            ✅ {appartamenti.find(a => String(a.id) === String(smartpmsMappingTemp[p.nome_smartpms] || p.appartamento_id))?.nome || p.appartamento_nome}
-                          </div>
-                        )}
                       </td>
-                      <td style={{ fontSize: '12px' }}>{p.guest_name || '—'}</td>
-                      <td style={{ fontSize: '12px' }}>{p.check_in}</td>
-                      <td style={{ fontSize: '12px' }}>{p.check_out}</td>
-                      <td>
-                        <input type="number" min="1" max="20" className="edit-input" style={{ width: '60px', textAlign: 'center' }}
-                          value={smartpmsOspitiOverride[i] ?? p.num_ospiti ?? 1}
-                          onChange={e => setSmartpmsOspitiOverride(prev => ({ ...prev, [i]: parseInt(e.target.value) || 1 }))} />
-                      </td>
-                      <td>
-                        {/* Note editabile */}
-                        <input type="text" className="edit-input" style={{ width: '120px', fontSize: '11px' }}
-                          placeholder="Aggiungi nota..."
-                          value={p.note || ''}
-                          onChange={e => {
-                            setSmartpmsAnteprima(prev => prev.map((item, idx) =>
-                              idx === i ? { ...item, note: e.target.value } : item
-                            ));
-                          }} />
-                      </td>
-                      <td>
-                        {p.esistente
-                          ? <span style={{ color: '#777', fontSize: '12px' }}>già presente</span>
-                          : <span style={{ color: '#16a34a', fontSize: '12px' }}>da importare</span>}
-                      </td>
+                      <td style={{fontSize:'12px'}}>{p.guest_name||'—'}</td>
+                      <td style={{fontSize:'12px'}}>{p.check_in}</td>
+                      <td style={{fontSize:'12px'}}>{p.check_out}</td>
+                      <td><input type="number" min="1" max="20" className="edit-input" style={{width:'60px',textAlign:'center'}} value={smartpmsOspitiOverride[i]??p.num_ospiti??1} onChange={e=>setSmartpmsOspitiOverride(prev=>({...prev,[i]:parseInt(e.target.value)||1}))}/></td>
+                      <td><input type="text" className="edit-input" style={{width:'120px',fontSize:'11px'}} placeholder="Aggiungi nota..." value={p.note||''} onChange={e=>setSmartpmsAnteprima(prev=>prev.map((item,idx)=>idx===i?{...item,note:e.target.value}:item))}/></td>
+                      <td>{p.esistente?<span style={{color:'#777',fontSize:'12px'}}>già presente</span>:<span style={{color:'#16a34a',fontSize:'12px'}}>da importare</span>}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-
-            <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
-              <button className="btn-import" disabled={smartpmsLoading} onClick={async () => {
+            <div style={{display:'flex',gap:'12px',marginTop:'16px'}}>
+              <button className="btn-import" disabled={smartpmsLoading} onClick={async()=>{
                 setSmartpmsLoading(true);
-                // Salva mapping
-                for (const [nome, appId] of Object.entries(smartpmsMappingTemp)) {
-                  if (appId) await fetch(`${API_URL}/smartpms/mapping`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome_smartpms: nome, appartamento_id: parseInt(appId) }) }).catch(() => {});
-                }
-                const daImportare = smartpmsAnteprima
-                  .filter((p, i) => smartpmsSelezione[i] !== false && !p.esistente)
-                  .map((p, _) => {
-                    const i = smartpmsAnteprima.indexOf(p);
-                    return {
-                      ...p,
-                      num_ospiti: smartpmsOspitiOverride[i] ?? p.num_ospiti ?? 1,
-                      appartamento_id: smartpmsMappingTemp[p.nome_smartpms] ? parseInt(smartpmsMappingTemp[p.nome_smartpms]) : p.appartamento_id
-                    };
-                  });
-                try {
-                  const res = await fetch(`${API_URL}/sync/smartpms`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prenotazioni: daImportare }) });
-                  const data = await res.json(); setSmartpmsRisultato(data); setSmartpmsAnteprima([]);
-                  if (data.importate > 0) setTimeout(() => onImport(), 1500);
-                } catch { setSmartpmsRisultato({ errori: ['Errore connessione'] }); }
-                finally { setSmartpmsLoading(false); }
+                for(const [nome,appId] of Object.entries(smartpmsMappingTemp)){if(appId)await fetch(`${API_URL}/smartpms/mapping`,{method:'POST',headers:authHeaders(),body:JSON.stringify({nome_smartpms:nome,appartamento_id:parseInt(appId)})}).catch(()=>{});}
+                const daImportare=smartpmsAnteprima.filter((p,i)=>smartpmsSelezione[i]!==false&&!p.esistente).map(p=>{const i=smartpmsAnteprima.indexOf(p);return{...p,num_ospiti:smartpmsOspitiOverride[i]??p.num_ospiti??1,appartamento_id:smartpmsMappingTemp[p.nome_smartpms]?parseInt(smartpmsMappingTemp[p.nome_smartpms]):p.appartamento_id};});
+                try{const res=await fetch(`${API_URL}/sync/smartpms`,{method:'POST',headers:authHeaders(),body:JSON.stringify({prenotazioni:daImportare})});const data=await res.json();setSmartpmsRisultato(data);setSmartpmsAnteprima([]);if(data.importate>0)setTimeout(()=>onImport(),1500);}
+                catch{setSmartpmsRisultato({errori:['Errore connessione']});}finally{setSmartpmsLoading(false);}
               }}>
-                {smartpmsLoading ? '⏳ Importazione...' : `✅ Importa SmartPMS (${smartpmsAnteprima.filter((p, i) => smartpmsSelezione[i] !== false && !p.esistente).length})`}
+                {smartpmsLoading?'⏳ Importazione...':`✅ Importa SmartPMS (${smartpmsAnteprima.filter((p,i)=>smartpmsSelezione[i]!==false&&!p.esistente).length})`}
               </button>
-              <button className="btn-icon btn-cancel-icon" onClick={() => setSmartpmsAnteprima([])} style={{ padding: '10px 16px' }}>✕ Annulla</button>
+              <button className="btn-icon btn-cancel-icon" onClick={()=>setSmartpmsAnteprima([])} style={{padding:'10px 16px'}}>✕ Annulla</button>
             </div>
           </div>
         )}
-
         {smartpmsRisultato && !smartpmsAnteprima.length && (
-          <div className={`import-result ${smartpmsRisultato.errori?.length && !smartpmsRisultato.importate ? 'result-warn' : 'result-ok'}`} style={{ marginTop: '12px' }}>
-            <div className="result-row">✅ Importate: <strong>{smartpmsRisultato.importate || 0}</strong></div>
-            <div className="result-row">⏭ Saltate: <strong>{smartpmsRisultato.saltate || 0}</strong></div>
-            {smartpmsRisultato.errori?.length > 0 && <div className="result-errors"><strong>Dettagli:</strong><ul>{smartpmsRisultato.errori.map((e, i) => <li key={i}>{e}</li>)}</ul></div>}
+          <div className={`import-result ${smartpmsRisultato.errori?.length&&!smartpmsRisultato.importate?'result-warn':'result-ok'}`} style={{marginTop:'12px'}}>
+            <div className="result-row">✅ Importate: <strong>{smartpmsRisultato.importate||0}</strong></div>
+            <div className="result-row">⏭ Saltate: <strong>{smartpmsRisultato.saltate||0}</strong></div>
+            {smartpmsRisultato.errori?.length>0&&<div className="result-errors"><strong>Dettagli:</strong><ul>{smartpmsRisultato.errori.map((e,i)=><li key={i}>{e}</li>)}</ul></div>}
           </div>
         )}
       </div>
 
       {/* SYNC GOOGLE SHEET */}
-      <div className="sync-panel" style={{ marginTop: '16px' }}>
+      <div className="sync-panel" style={{marginTop:'16px'}}>
         <div className="sync-panel-header">
           <div><h3>📊 Sync da Google Sheet</h3><p className="sync-desc">Legge il calendario pulizie dal foglio condiviso.</p></div>
-          <button className="btn-sync" onClick={async () => {
+          <button className="btn-sync" onClick={async()=>{
             setSheetLoading(true); setSheetAnteprima(null); setSheetRisultato(null);
-            try {
-              const tabRes = await fetch(`${API_URL}/sync/sheets/tabs`); const tabData = await tabRes.json();
-              if (tabData.errore) { setSheetRisultato({ errore: tabData.errore }); return; }
-              setSheetTabs(tabData.tabs || []);
-              const mesi = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
-              const tabCorrente = mesi[new Date().getMonth()];
-              const tabDaLeggere = tabData.tabs.includes(tabCorrente) ? tabCorrente : tabData.tabs[tabData.tabs.length - 1];
+            try{
+              const tabRes=await fetch(`${API_URL}/sync/sheets/tabs`,{headers:authHeaders()}); const tabData=await tabRes.json();
+              if(tabData.errore){setSheetRisultato({errore:tabData.errore});return;}
+              setSheetTabs(tabData.tabs||[]);
+              const mesi=['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+              const tabCorrente=mesi[new Date().getMonth()];
+              const tabDaLeggere=tabData.tabs.includes(tabCorrente)?tabCorrente:tabData.tabs[tabData.tabs.length-1];
               setSheetTabSelezionato(tabDaLeggere);
-              const res = await fetch(`${API_URL}/sync/sheets/anteprima`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tab: tabDaLeggere }) });
-              const data = await res.json();
-              if (data.errore) { setSheetRisultato({ errore: data.errore }); return; }
+              const res=await fetch(`${API_URL}/sync/sheets/anteprima`,{method:'POST',headers:authHeaders(),body:JSON.stringify({tab:tabDaLeggere})});
+              const data=await res.json();
+              if(data.errore){setSheetRisultato({errore:data.errore});return;}
               setSheetAnteprima(data);
-              const sel = {}; data.prenotazioni.forEach((p, i) => { sel[i] = !p.gia_processato && !p.esistente; }); setSheetSelezione(sel);
-            } catch { setSheetRisultato({ errore: 'Errore connessione' }); } finally { setSheetLoading(false); }
+              const sel={}; data.prenotazioni.forEach((p,i)=>{sel[i]=!p.gia_processato&&!p.esistente;}); setSheetSelezione(sel);
+            }catch{setSheetRisultato({errore:'Errore connessione'});}finally{setSheetLoading(false);}
           }} disabled={sheetLoading}>
-            {sheetLoading ? '⏳ Lettura...' : '📊 Leggi Google Sheet'}
+            {sheetLoading?'⏳ Lettura...':'📊 Leggi Google Sheet'}
           </button>
         </div>
-        {sheetLoading && <div className="sync-loading"><div className="sync-spinner" />Lettura foglio in corso...</div>}
+        {sheetLoading && <div className="sync-loading"><div className="sync-spinner"/>Lettura foglio...</div>}
         {sheetAnteprima && !sheetLoading && (
-          <div style={{ marginTop: '12px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-              <label style={{ fontWeight: 'bold', fontSize: '14px' }}>Tab mese:</label>
-              <select className="edit-input" style={{ width: '160px' }} value={sheetTabSelezionato}
-                onChange={async e => {
-                  const tab = e.target.value; setSheetTabSelezionato(tab); setSheetLoading(true);
-                  try { const res = await fetch(`${API_URL}/sync/sheets/anteprima`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tab }) }); const data = await res.json(); setSheetAnteprima(data); const sel = {}; data.prenotazioni.forEach((p, i) => { sel[i] = !p.gia_processato && !p.esistente; }); setSheetSelezione(sel); } catch {} finally { setSheetLoading(false); }
+          <div style={{marginTop:'12px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'12px'}}>
+              <label style={{fontWeight:'bold',fontSize:'14px'}}>Tab mese:</label>
+              <select className="edit-input" style={{width:'160px'}} value={sheetTabSelezionato}
+                onChange={async e=>{
+                  const tab=e.target.value; setSheetTabSelezionato(tab); setSheetLoading(true);
+                  try{const res=await fetch(`${API_URL}/sync/sheets/anteprima`,{method:'POST',headers:authHeaders(),body:JSON.stringify({tab})});const data=await res.json();setSheetAnteprima(data);const sel={};data.prenotazioni.forEach((p,i)=>{sel[i]=!p.gia_processato&&!p.esistente;});setSheetSelezione(sel);}catch{}finally{setSheetLoading(false);}
                 }}>
-                {sheetTabs.map(t => <option key={t} value={t}>{t}</option>)}
+                {sheetTabs.map(t=><option key={t} value={t}>{t}</option>)}
               </select>
-              <span style={{ fontSize: '13px', color: '#666' }}>{sheetAnteprima.totale} prenotazioni trovate</span>
+              <span style={{fontSize:'13px',color:'#666'}}>{sheetAnteprima.totale} prenotazioni trovate</span>
             </div>
             <div className="table-container">
               <table>
-                <thead><tr><th style={{width:'36px'}}><input type="checkbox" checked={Object.values(sheetSelezione).every(Boolean)} onChange={e => { const s = {}; sheetAnteprima.prenotazioni.forEach((_, i) => { s[i] = e.target.checked; }); setSheetSelezione(s); }} /></th><th>Appartamento</th><th>Match DB</th><th>Ospite</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Note</th><th>Stato</th></tr></thead>
+                <thead><tr><th style={{width:'36px'}}><input type="checkbox" checked={Object.values(sheetSelezione).every(Boolean)} onChange={e=>{const s={};sheetAnteprima.prenotazioni.forEach((_,i)=>{s[i]=e.target.checked;});setSheetSelezione(s);}}/></th><th>Appartamento</th><th>Match DB</th><th>Ospite</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Note</th><th>Stato</th></tr></thead>
                 <tbody>
-                  {sheetAnteprima.prenotazioni.map((p, i) => (
-                    <tr key={i} style={{ opacity: sheetSelezione[i] ? 1 : 0.45 }}>
-                      <td><input type="checkbox" checked={!!sheetSelezione[i]} onChange={e => setSheetSelezione(prev => ({ ...prev, [i]: e.target.checked }))} /></td>
-                      <td><strong style={{ fontSize: '12px' }}>{p.appartamento}</strong></td>
-                      <td><select className="edit-input" style={{ fontSize: '11px', minWidth: '140px' }} value={sheetMatchOverride[i] || p.appartamento_id || ''} onChange={e => setSheetMatchOverride(prev => ({ ...prev, [i]: e.target.value }))}>{!p.appartamento_id && !sheetMatchOverride[i] && <option value="">⚠️ non trovato</option>}{appartamenti.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}</select></td>
-                      <td style={{ fontSize: '12px' }}>{p.nome_ospite || '—'}</td><td style={{ fontSize: '12px' }}>{p.check_in}</td><td style={{ fontSize: '12px' }}>{p.check_out}</td><td>{p.num_ospiti}</td><td style={{ fontSize: '11px', color: '#555' }}>{p.note || '—'}</td>
-                      <td style={{ fontSize: '11px' }}>{p.esistente ? <span style={{ color: '#888' }}>già nel DB</span> : p.gia_processato ? <span style={{ color: '#f59e0b' }}>già processato</span> : <span style={{ color: '#16a34a' }}>da importare</span>}</td>
+                  {sheetAnteprima.prenotazioni.map((p,i)=>(
+                    <tr key={i} style={{opacity:sheetSelezione[i]?1:0.45}}>
+                      <td><input type="checkbox" checked={!!sheetSelezione[i]} onChange={e=>setSheetSelezione(prev=>({...prev,[i]:e.target.checked}))}/></td>
+                      <td><strong style={{fontSize:'12px'}}>{p.appartamento}</strong></td>
+                      <td><select className="edit-input" style={{fontSize:'11px',minWidth:'140px'}} value={sheetMatchOverride[i]||p.appartamento_id||''} onChange={e=>setSheetMatchOverride(prev=>({...prev,[i]:e.target.value}))}>{!p.appartamento_id&&!sheetMatchOverride[i]&&<option value="">⚠️ non trovato</option>}{appartamenti.map(a=><option key={a.id} value={a.id}>{a.nome}</option>)}</select></td>
+                      <td style={{fontSize:'12px'}}>{p.nome_ospite||'—'}</td><td style={{fontSize:'12px'}}>{p.check_in}</td><td style={{fontSize:'12px'}}>{p.check_out}</td><td>{p.num_ospiti}</td><td style={{fontSize:'11px',color:'#555'}}>{p.note||'—'}</td>
+                      <td style={{fontSize:'11px'}}>{p.esistente?<span style={{color:'#888'}}>già nel DB</span>:p.gia_processato?<span style={{color:'#f59e0b'}}>già processato</span>:<span style={{color:'#16a34a'}}>da importare</span>}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <div style={{ display: 'flex', gap: '12px', marginTop: '12px', alignItems: 'center' }}>
-              <button className="btn-import" disabled={sheetLoading || Object.values(sheetSelezione).every(v => !v)} onClick={async () => {
+            <div style={{display:'flex',gap:'12px',marginTop:'12px'}}>
+              <button className="btn-import" disabled={sheetLoading||Object.values(sheetSelezione).every(v=>!v)} onClick={async()=>{
                 setSheetLoading(true);
-                const sel = sheetAnteprima.prenotazioni.filter((_, i) => sheetSelezione[i]).map(p => { const i = sheetAnteprima.prenotazioni.indexOf(p); return { ...p, appartamento_id: sheetMatchOverride[i] || p.appartamento_id }; });
-                try { const res = await fetch(`${API_URL}/sync/sheets/importa`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prenotazioni: sel, marcaProcessato: true }) }); const data = await res.json(); setSheetRisultato(data); setSheetAnteprima(null); if (data.importate > 0) setTimeout(() => onImport(), 1500); } catch { setSheetRisultato({ errore: 'Errore connessione' }); } finally { setSheetLoading(false); }
-              }}>
-                {sheetLoading ? '⏳...' : `✅ Importa (${Object.values(sheetSelezione).filter(Boolean).length})`}
-              </button>
-              <button className="btn-icon btn-cancel-icon" style={{ padding: '10px 16px' }} onClick={() => setSheetAnteprima(null)}>✕ Annulla</button>
+                const sel=sheetAnteprima.prenotazioni.filter((_,i)=>sheetSelezione[i]).map(p=>{const i=sheetAnteprima.prenotazioni.indexOf(p);return{...p,appartamento_id:sheetMatchOverride[i]||p.appartamento_id};});
+                try{const res=await fetch(`${API_URL}/sync/sheets/importa`,{method:'POST',headers:authHeaders(),body:JSON.stringify({prenotazioni:sel,marcaProcessato:true})});const data=await res.json();setSheetRisultato(data);setSheetAnteprima(null);if(data.importate>0)setTimeout(()=>onImport(),1500);}catch{setSheetRisultato({errore:'Errore connessione'});}finally{setSheetLoading(false);}
+              }}>{sheetLoading?'⏳...': `✅ Importa (${Object.values(sheetSelezione).filter(Boolean).length})`}</button>
+              <button className="btn-icon btn-cancel-icon" style={{padding:'10px 16px'}} onClick={()=>setSheetAnteprima(null)}>✕ Annulla</button>
             </div>
           </div>
         )}
         {sheetRisultato && !sheetAnteprima && (
-          <div className={`import-result ${sheetRisultato.errore ? 'result-warn' : 'result-ok'}`} style={{ marginTop: '12px' }}>
-            {sheetRisultato.errore ? <div className="result-row">❌ {sheetRisultato.errore}</div> : <><div className="result-row">✅ Importate: <strong>{sheetRisultato.importate}</strong></div><div className="result-row">⏭ Saltate: <strong>{sheetRisultato.saltate}</strong></div>{sheetRisultato.errori?.length > 0 && <div className="result-errors"><ul>{sheetRisultato.errori.map((e,i)=><li key={i}>{e}</li>)}</ul></div>}</>}
+          <div className={`import-result ${sheetRisultato.errore?'result-warn':'result-ok'}`} style={{marginTop:'12px'}}>
+            {sheetRisultato.errore?<div className="result-row">❌ {sheetRisultato.errore}</div>:<><div className="result-row">✅ Importate: <strong>{sheetRisultato.importate}</strong></div><div className="result-row">⏭ Saltate: <strong>{sheetRisultato.saltate}</strong></div>{sheetRisultato.errori?.length>0&&<div className="result-errors"><ul>{sheetRisultato.errori.map((e,i)=><li key={i}>{e}</li>)}</ul></div>}</>}
           </div>
         )}
       </div>
 
       {/* SYNC EMAIL */}
-      <div className="sync-panel" style={{ marginTop: '16px' }}>
+      <div className="sync-panel" style={{marginTop:'16px'}}>
         <div className="sync-panel-header">
           <div><h3>📧 Sync da Email</h3><p className="sync-desc">Legge le email con label pl2-importa/pl2-cancella/pl2-aggiungi.{' '}<a href="https://gestione-prenotazioni-production.up.railway.app/auth/google" target="_blank" rel="noreferrer" style={{color:'#2d5a3d'}}>Autorizza Gmail →</a></p></div>
-          <button className="btn-sync" onClick={leggiEmailAnteprima} disabled={syncingEmail || importandoEmail}>{syncingEmail ? '⏳ Lettura...' : '📧 Leggi email ora'}</button>
+          <button className="btn-sync" onClick={leggiEmailAnteprima} disabled={syncingEmail||importandoEmail}>{syncingEmail?'⏳ Lettura...':'📧 Leggi email ora'}</button>
         </div>
-        {syncingEmail && <div className="sync-loading"><div className="sync-spinner" />Lettura e analisi email in corso...</div>}
+        {syncingEmail && <div className="sync-loading"><div className="sync-spinner"/>Lettura email...</div>}
         {anteprimaEmail && !syncingEmail && (
           <div className="email-preview-panel">
-            <div className="email-preview-header">
-              <h4>📋 Anteprima — {anteprimaEmail.prenotazioni.length} prenotazioni in {anteprimaEmail.emailAnalizzate} email</h4>
-            </div>
+            <h4>📋 Anteprima — {anteprimaEmail.prenotazioni.length} prenotazioni in {anteprimaEmail.emailAnalizzate} email</h4>
             <div className="table-container">
               <table>
-                <thead><tr><th style={{width:'40px'}}><input type="checkbox" checked={Object.values(selezionate).every(v => v)} onChange={e => { const sel = {}; anteprimaEmail.prenotazioni.forEach((_, i) => { sel[i] = e.target.checked }); setSelezionate(sel) }} /></th><th>Appartamento</th><th>Match DB</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Note</th><th>Azione</th></tr></thead>
+                <thead><tr><th style={{width:'40px'}}><input type="checkbox" checked={Object.values(selezionate).every(v=>v)} onChange={e=>{const sel={};anteprimaEmail.prenotazioni.forEach((_,i)=>{sel[i]=e.target.checked});setSelezionate(sel)}}/></th><th>Appartamento</th><th>Match DB</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Note</th><th>Azione</th></tr></thead>
                 <tbody>
-                  {anteprimaEmail.prenotazioni.map((p, i) => {
-                    const match = matchApp(p.appartamento), matchOverride = emailMatchOverride[i]
+                  {anteprimaEmail.prenotazioni.map((p,i)=>{
+                    const match=matchApp(p.appartamento), matchOverride=emailMatchOverride[i]
                     return (
-                      <tr key={i} style={{ opacity: selezionate[i] ? 1 : 0.4 }}>
-                        <td><input type="checkbox" checked={!!selezionate[i]} onChange={e => setSelezionate(prev => ({ ...prev, [i]: e.target.checked }))} /></td>
+                      <tr key={i} style={{opacity:selezionate[i]?1:0.4}}>
+                        <td><input type="checkbox" checked={!!selezionate[i]} onChange={e=>setSelezionate(prev=>({...prev,[i]:e.target.checked}))}/></td>
                         <td><strong>{p.appartamento}</strong></td>
-                        <td><select className="edit-input" style={{ minWidth: '180px', fontSize: '12px' }} value={matchOverride || match?.id || ''} onChange={e => setEmailMatchOverride(prev => ({ ...prev, [i]: e.target.value }))}>{!match && !matchOverride && <option value="">⚠️ non trovato</option>}{appartamenti.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}</select></td>
-                        <td>{fmtData(p.check_in)}</td><td>{fmtData(p.check_out)}</td><td>{p.ospiti || '—'}</td>
-                        <td style={{ fontSize: '12px', color: '#555', maxWidth: '150px' }}>{p.note || '—'}</td>
-                        <td><span className={`azione-badge ${p.azione === 'cancella' ? 'azione-cancella' : 'azione-nuova'}`}>{p.azione === 'cancella' ? '🗑 Cancella' : '✅ Nuova'}</span></td>
+                        <td><select className="edit-input" style={{minWidth:'180px',fontSize:'12px'}} value={matchOverride||match?.id||''} onChange={e=>setEmailMatchOverride(prev=>({...prev,[i]:e.target.value}))}>{!match&&!matchOverride&&<option value="">⚠️ non trovato</option>}{appartamenti.map(a=><option key={a.id} value={a.id}>{a.nome}</option>)}</select></td>
+                        <td>{fmtData(p.check_in)}</td><td>{fmtData(p.check_out)}</td><td>{p.ospiti||'—'}</td>
+                        <td style={{fontSize:'12px',color:'#555',maxWidth:'150px'}}>{p.note||'—'}</td>
+                        <td><span className={`azione-badge ${p.azione==='cancella'?'azione-cancella':'azione-nuova'}`}>{p.azione==='cancella'?'🗑 Cancella':'✅ Nuova'}</span></td>
                       </tr>
                     )
                   })}
@@ -980,125 +978,120 @@ function ImportItalianWay({ appartamenti, onImport }) {
             </div>
             <div className="email-preview-actions">
               <span className="email-preview-count">{Object.values(selezionate).filter(Boolean).length} selezionate su {anteprimaEmail.prenotazioni.length}</span>
-              <button className="btn-reset-filtri" onClick={() => setAnteprimaEmail(null)}>✕ Annulla</button>
-              <button className="btn-import" onClick={confermaImportEmail} disabled={importandoEmail || Object.values(selezionate).every(v => !v)}>{importandoEmail ? '⏳ Importazione...' : `✅ Conferma (${Object.values(selezionate).filter(Boolean).length})`}</button>
+              <button className="btn-reset-filtri" onClick={()=>setAnteprimaEmail(null)}>✕ Annulla</button>
+              <button className="btn-import" onClick={confermaImportEmail} disabled={importandoEmail||Object.values(selezionate).every(v=>!v)}>{importandoEmail?'⏳ Importazione...':`✅ Conferma (${Object.values(selezionate).filter(Boolean).length})`}</button>
             </div>
           </div>
         )}
         {syncEmailStatus && !syncingEmail && !anteprimaEmail && (
-          <div className={`import-result ${syncEmailStatus.errore ? 'result-warn' : 'result-ok'}`} style={{marginTop:'12px'}}>
-            {syncEmailStatus.errore ? <div className="result-row">❌ {syncEmailStatus.errore}</div>
-              : syncEmailStatus.messaggio ? <div className="result-row">ℹ️ {syncEmailStatus.messaggio}</div>
-              : <><div className="result-row">✅ Importate: <strong>{syncEmailStatus.importate}</strong></div><div className="result-row">🗑 Cancellate: <strong>{syncEmailStatus.cancellate}</strong></div></>}
+          <div className={`import-result ${syncEmailStatus.errore?'result-warn':'result-ok'}`} style={{marginTop:'12px'}}>
+            {syncEmailStatus.errore?<div className="result-row">❌ {syncEmailStatus.errore}</div>:syncEmailStatus.messaggio?<div className="result-row">ℹ️ {syncEmailStatus.messaggio}</div>:<><div className="result-row">✅ Importate: <strong>{syncEmailStatus.importate}</strong></div><div className="result-row">🗑 Cancellate: <strong>{syncEmailStatus.cancellate}</strong></div></>}
           </div>
         )}
       </div>
 
       {/* SMOOBU */}
-      <div className="sync-panel" style={{ marginTop: '16px' }}>
+      <div className="sync-panel" style={{marginTop:'16px'}}>
         <div className="sync-panel-header">
           <div><h3>🏠 Sync da Smoobu</h3><p className="sync-desc">Sincronizza automaticamente alle 02:00 e 07:00 UTC.</p></div>
-          <button className="btn-sync" onClick={async () => {
+          <button className="btn-sync" onClick={async()=>{
             setSmoobuLoading(true); setSmoobuRisultato(null); setSmoobuAnteprima([]);
-            try {
-              const res = await fetch(`${API_URL}/sync/smoobu/anteprima`, { method: 'POST' }); const data = await res.json();
-              if (data.errore) { setSmoobuRisultato({ errori: [data.errore] }); return; }
-              const mappingInit = {}; data.prenotazioni.forEach(p => { if (!p.mappato) mappingInit[p.nome_smoobu] = ''; }); setSmoobuMappingTemp(mappingInit);
-              const sel = {}; data.prenotazioni.forEach((p, i) => { sel[i] = !p.esistente }); setSmoobuSelezione(sel); setSmoobuOspitiOverride({}); setSmoobuAnteprima(data.prenotazioni || []);
-            } catch (err) { setSmoobuRisultato({ errori: ['Errore connessione'] }); } finally { setSmoobuLoading(false); }
+            try{
+              const res=await fetch(`${API_URL}/sync/smoobu/anteprima`,{method:'POST',headers:authHeaders()}); const data=await res.json();
+              if(data.errore){setSmoobuRisultato({errori:[data.errore]});return;}
+              const mappingInit={}; data.prenotazioni.forEach(p=>{if(!p.mappato)mappingInit[p.nome_smoobu]='';});setSmoobuMappingTemp(mappingInit);
+              const sel={}; data.prenotazioni.forEach((p,i)=>{sel[i]=!p.esistente});setSmoobuSelezione(sel);setSmoobuOspitiOverride({});setSmoobuAnteprima(data.prenotazioni||[]);
+            }catch(err){setSmoobuRisultato({errori:['Errore connessione']});}finally{setSmoobuLoading(false);}
           }} disabled={smoobuLoading}>
-            {smoobuLoading ? '⏳ Caricamento...' : '🏠 Leggi prenotazioni Smoobu'}
+            {smoobuLoading?'⏳ Caricamento...':'🏠 Leggi prenotazioni Smoobu'}
           </button>
         </div>
-        {smoobuLoading && <div className="sync-loading"><div className="sync-spinner" />Connessione a Smoobu in corso...</div>}
-        {smoobuAnteprima.length > 0 && !smoobuRisultato && (
-          <div style={{ marginTop: '16px' }}>
-            <h4 style={{ margin: '0 0 12px', color: '#2d5a3d' }}>📋 Anteprima — {smoobuAnteprima.length} prenotazioni trovate</h4>
-            {smoobuAnteprima.some(p => !p.mappato) && (
-              <div className="import-warning" style={{ marginBottom: '12px' }}>
-                <strong>⚠️ Associa gli appartamenti Smoobu al gestionale:</strong>
-                {[...new Set(smoobuAnteprima.filter(p => !p.mappato).map(p => p.nome_smoobu))].map(nome => (
-                  <div key={nome} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
-                    <span style={{ minWidth: '200px', fontWeight: 'bold', fontSize: '13px' }}>"{nome}"</span><span>→</span>
-                    <select className="edit-input" style={{ flex: 1 }} value={smoobuMappingTemp[nome] || ''} onChange={e => setSmoobuMappingTemp(prev => ({ ...prev, [nome]: e.target.value }))}><option value="">Seleziona appartamento...</option>{appartamenti.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}</select>
+        {smoobuLoading && <div className="sync-loading"><div className="sync-spinner"/>Connessione a Smoobu...</div>}
+        {smoobuAnteprima.length>0 && !smoobuRisultato && (
+          <div style={{marginTop:'16px'}}>
+            <h4 style={{margin:'0 0 12px',color:'#2d5a3d'}}>📋 Anteprima — {smoobuAnteprima.length} prenotazioni trovate</h4>
+            {smoobuAnteprima.some(p=>!p.mappato) && (
+              <div className="import-warning" style={{marginBottom:'12px'}}>
+                <strong>⚠️ Associa gli appartamenti Smoobu:</strong>
+                {[...new Set(smoobuAnteprima.filter(p=>!p.mappato).map(p=>p.nome_smoobu))].map(nome=>(
+                  <div key={nome} style={{display:'flex',alignItems:'center',gap:'8px',marginTop:'8px'}}>
+                    <span style={{minWidth:'200px',fontWeight:'bold',fontSize:'13px'}}>"{nome}"</span><span>→</span>
+                    <select className="edit-input" style={{flex:1}} value={smoobuMappingTemp[nome]||''} onChange={e=>setSmoobuMappingTemp(prev=>({...prev,[nome]:e.target.value}))}><option value="">Seleziona...</option>{appartamenti.map(a=><option key={a.id} value={a.id}>{a.nome}</option>)}</select>
                   </div>
                 ))}
               </div>
             )}
             <div className="table-container">
               <table>
-                <thead><tr><th style={{width:'36px'}}><input type="checkbox" onChange={e => { const s = {}; smoobuAnteprima.forEach((p, i) => { s[i] = p.esistente ? false : e.target.checked; }); setSmoobuSelezione(s); }} /></th><th>Appartamento Smoobu</th><th>Match DB</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Portale</th><th>Stato</th></tr></thead>
+                <thead><tr><th style={{width:'36px'}}><input type="checkbox" onChange={e=>{const s={};smoobuAnteprima.forEach((p,i)=>{s[i]=p.esistente?false:e.target.checked;});setSmoobuSelezione(s);}}/></th><th>Appartamento Smoobu</th><th>Match DB</th><th>Check-in</th><th>Check-out</th><th>Ospiti</th><th>Portale</th><th>Stato</th></tr></thead>
                 <tbody>
-                  {smoobuAnteprima.map((p, i) => (
-                    <tr key={i} style={{ opacity: smoobuSelezione[i] === false || p.esistente ? 0.45 : 1 }}>
-                      <td><input type="checkbox" checked={!p.esistente && smoobuSelezione[i] !== false} disabled={p.esistente} onChange={e => setSmoobuSelezione(prev => ({ ...prev, [i]: e.target.checked }))} /></td>
+                  {smoobuAnteprima.map((p,i)=>(
+                    <tr key={i} style={{opacity:smoobuSelezione[i]===false||p.esistente?0.45:1}}>
+                      <td><input type="checkbox" checked={!p.esistente&&smoobuSelezione[i]!==false} disabled={p.esistente} onChange={e=>setSmoobuSelezione(prev=>({...prev,[i]:e.target.checked}))}/></td>
                       <td><strong>{p.nome_smoobu}</strong></td>
-                      <td>{p.appartamento_nome ? <span className="match-ok">✅ {p.appartamento_nome}</span> : smoobuMappingTemp[p.nome_smoobu] ? <span className="match-ok">🔗 {appartamenti.find(a => String(a.id) === String(smoobuMappingTemp[p.nome_smoobu]))?.nome}</span> : <span className="match-ko">⚠️ non mappato</span>}</td>
+                      <td>{p.appartamento_nome?<span className="match-ok">✅ {p.appartamento_nome}</span>:smoobuMappingTemp[p.nome_smoobu]?<span className="match-ok">🔗 {appartamenti.find(a=>String(a.id)===String(smoobuMappingTemp[p.nome_smoobu]))?.nome}</span>:<span className="match-ko">⚠️ non mappato</span>}</td>
                       <td>{p.check_in}</td><td>{p.check_out}</td>
-                      <td><input type="number" min="1" max="20" className="edit-input" style={{ width: '60px', textAlign: 'center' }} value={smoobuOspitiOverride[i] ?? p.num_ospiti ?? 1} onChange={e => setSmoobuOspitiOverride(prev => ({ ...prev, [i]: parseInt(e.target.value) || 1 }))} /></td>
-                      <td style={{ fontSize: '12px', color: '#777' }}>{p.portale || '—'}</td>
-                      <td>{p.esistente ? <span style={{ color: '#777', fontSize: '12px' }}>già presente</span> : <span style={{ color: '#16a34a', fontSize: '12px' }}>da importare</span>}</td>
+                      <td><input type="number" min="1" max="20" className="edit-input" style={{width:'60px',textAlign:'center'}} value={smoobuOspitiOverride[i]??p.num_ospiti??1} onChange={e=>setSmoobuOspitiOverride(prev=>({...prev,[i]:parseInt(e.target.value)||1}))}/></td>
+                      <td style={{fontSize:'12px',color:'#777'}}>{p.portale||'—'}</td>
+                      <td>{p.esistente?<span style={{color:'#777',fontSize:'12px'}}>già presente</span>:<span style={{color:'#16a34a',fontSize:'12px'}}>da importare</span>}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
-              <button className="btn-import" disabled={smoobuLoading} onClick={async () => {
+            <div style={{display:'flex',gap:'12px',marginTop:'16px'}}>
+              <button className="btn-import" disabled={smoobuLoading} onClick={async()=>{
                 setSmoobuLoading(true);
-                for (const [nomeSmoobu, appId] of Object.entries(smoobuMappingTemp)) { if (appId) await fetch(`${API_URL}/smoobu/mapping`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome_smoobu: nomeSmoobu, appartamento_id: parseInt(appId) }) }).catch(() => {}); }
-                const daImportare = smoobuAnteprima.filter((_, i) => smoobuSelezione[i] !== false && !smoobuAnteprima[i].esistente).map((p, _) => { const i = smoobuAnteprima.indexOf(p); return { ...p, num_ospiti: smoobuOspitiOverride[i] ?? p.num_ospiti ?? 1, appartamento_id: smoobuMappingTemp[p.nome_smoobu] || p.appartamento_id }; });
-                try { const res = await fetch(`${API_URL}/sync/smoobu`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prenotazioni: daImportare }) }); const data = await res.json(); setSmoobuRisultato(data); setSmoobuAnteprima([]); if (data.importate > 0) setTimeout(() => onImport(), 1500); }
-                catch { setSmoobuRisultato({ errori: ['Errore connessione'] }); } finally { setSmoobuLoading(false); }
-              }}>
-                {smoobuLoading ? '⏳ Importazione...' : `✅ Importa Smoobu`}
-              </button>
-              <button className="btn-icon btn-cancel-icon" onClick={() => setSmoobuAnteprima([])} style={{ padding: '10px 16px' }}>✕ Annulla</button>
+                for(const [nomeSmoobu,appId] of Object.entries(smoobuMappingTemp)){if(appId)await fetch(`${API_URL}/smoobu/mapping`,{method:'POST',headers:authHeaders(),body:JSON.stringify({nome_smoobu:nomeSmoobu,appartamento_id:parseInt(appId)})}).catch(()=>{});}
+                const daImportare=smoobuAnteprima.filter((_,i)=>smoobuSelezione[i]!==false&&!smoobuAnteprima[i].esistente).map(p=>{const i=smoobuAnteprima.indexOf(p);return{...p,num_ospiti:smoobuOspitiOverride[i]??p.num_ospiti??1,appartamento_id:smoobuMappingTemp[p.nome_smoobu]||p.appartamento_id};});
+                try{const res=await fetch(`${API_URL}/sync/smoobu`,{method:'POST',headers:authHeaders(),body:JSON.stringify({prenotazioni:daImportare})});const data=await res.json();setSmoobuRisultato(data);setSmoobuAnteprima([]);if(data.importate>0)setTimeout(()=>onImport(),1500);}
+                catch{setSmoobuRisultato({errori:['Errore connessione']});}finally{setSmoobuLoading(false);}
+              }}>✅ Importa Smoobu</button>
+              <button className="btn-icon btn-cancel-icon" onClick={()=>setSmoobuAnteprima([])} style={{padding:'10px 16px'}}>✕ Annulla</button>
             </div>
           </div>
         )}
         {smoobuRisultato && !smoobuAnteprima.length && (
-          <div className={`import-result ${smoobuRisultato.errori?.length && !smoobuRisultato.importate ? 'result-warn' : 'result-ok'}`} style={{ marginTop: '12px' }}>
-            <div className="result-row">✅ Importate: <strong>{smoobuRisultato.importate || 0}</strong></div>
-            <div className="result-row">⏭ Saltate: <strong>{smoobuRisultato.saltate || 0}</strong></div>
-            {smoobuRisultato.errori?.length > 0 && <div className="result-errors"><ul>{smoobuRisultato.errori.map((e, i) => <li key={i}>{e}</li>)}</ul></div>}
+          <div className={`import-result ${smoobuRisultato.errori?.length&&!smoobuRisultato.importate?'result-warn':'result-ok'}`} style={{marginTop:'12px'}}>
+            <div className="result-row">✅ Importate: <strong>{smoobuRisultato.importate||0}</strong></div>
+            <div className="result-row">⏭ Saltate: <strong>{smoobuRisultato.saltate||0}</strong></div>
+            {smoobuRisultato.errori?.length>0&&<div className="result-errors"><ul>{smoobuRisultato.errori.map((e,i)=><li key={i}>{e}</li>)}</ul></div>}
           </div>
         )}
-        <div style={{ borderTop: '1px solid #e5e7eb', margin: '16px 0' }} />
-        <p className="sync-desc" style={{ marginBottom: '8px' }}>Oppure importa manualmente un CSV da Smoobu → Prenotazioni → Esporta.</p>
-        <div className={`drop-zone ${smoobuFile ? 'has-file' : ''}`} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) { setSmoobuFile(f); leggiSmoobuCSV(f) } }} onClick={() => document.getElementById('smoobu-csv-input').click()}>
-          <input id="smoobu-csv-input" type="file" accept=".csv" style={{ display: 'none' }} onChange={handleSmoobuFile} />
-          {smoobuFile ? <div className="drop-zone-ok"><span className="drop-icon">✅</span><span>{smoobuFile.name}</span><span className="drop-sub">{smoobuAnteprima.length} prenotazioni trovate</span></div> : <div className="drop-zone-empty"><span className="drop-icon">📂</span><span>Trascina il file .csv Smoobu qui oppure clicca</span></div>}
+        <div style={{borderTop:'1px solid #e5e7eb',margin:'16px 0'}}/>
+        <p className="sync-desc" style={{marginBottom:'8px'}}>Oppure importa manualmente un CSV da Smoobu → Prenotazioni → Esporta.</p>
+        <div className={`drop-zone ${smoobuFile?'has-file':''}`} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f){setSmoobuFile(f);leggiSmoobuCSV(f)}}} onClick={()=>document.getElementById('smoobu-csv-input').click()}>
+          <input id="smoobu-csv-input" type="file" accept=".csv" style={{display:'none'}} onChange={handleSmoobuFile}/>
+          {smoobuFile?<div className="drop-zone-ok"><span className="drop-icon">✅</span><span>{smoobuFile.name}</span><span className="drop-sub">{smoobuAnteprima.length} prenotazioni trovate</span></div>:<div className="drop-zone-empty"><span className="drop-icon">📂</span><span>Trascina il file .csv Smoobu qui oppure clicca</span></div>}
         </div>
         {smoobuErrore && <div className="error-message">{smoobuErrore}</div>}
       </div>
 
       <div className="import-divider">oppure importa manualmente da Excel ItalianWay</div>
-
-      <div className={`drop-zone ${file ? 'has-file' : ''}`} onDragOver={e => e.preventDefault()} onDrop={handleDrop} onClick={() => document.getElementById('xlsx-input').click()}>
-        <input id="xlsx-input" type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleFile} />
-        {file ? <div className="drop-zone-ok"><span className="drop-icon">✅</span><span>{file.name}</span><span className="drop-sub">{anteprima.length} righe trovate — clicca per cambiare</span></div> : <div className="drop-zone-empty"><span className="drop-icon">📂</span><span>Trascina il file .xlsx qui oppure clicca per selezionarlo</span></div>}
+      <div className={`drop-zone ${file?'has-file':''}`} onDragOver={e=>e.preventDefault()} onDrop={handleDrop} onClick={()=>document.getElementById('xlsx-input').click()}>
+        <input id="xlsx-input" type="file" accept=".xlsx" style={{display:'none'}} onChange={handleFile}/>
+        {file?<div className="drop-zone-ok"><span className="drop-icon">✅</span><span>{file.name}</span><span className="drop-sub">{anteprima.length} righe trovate</span></div>:<div className="drop-zone-empty"><span className="drop-icon">📂</span><span>Trascina il file .xlsx qui oppure clicca</span></div>}
       </div>
       {erroreFile && <div className="error-message">{erroreFile}</div>}
-      {anteprima.length > 0 && !risultato && (
+      {anteprima.length>0 && !risultato && (
         <div className="import-preview">
           <h3>Anteprima ({anteprima.length} pulizie)</h3>
           <div className="table-container">
             <table>
               <thead><tr><th>Appartamento</th><th>Match DB</th><th>Check-out</th><th>Prossimo check-in</th><th>Ospiti</th><th>Note</th></tr></thead>
-              <tbody>{anteprima.map((r, i) => { const match = matchApp(r.appartamento); return (<tr key={i}><td><strong>{r.appartamento}</strong></td><td>{match ? <span className="match-ok">✅ {match.nome}</span> : <span className="match-ko">⚠️ non trovato</span>}</td><td>{r.check_out}</td><td>{r.check_in || '—'}</td><td>{r.ospiti_entranti || '—'}</td><td style={{ fontSize: '12px', color: '#777' }}>{[r.categoria !== '-' ? r.categoria : '', r.note !== '-' ? r.note : ''].filter(Boolean).join(' | ') || '—'}</td></tr>) })}</tbody>
+              <tbody>{anteprima.map((r,i)=>{const match=matchApp(r.appartamento);return(<tr key={i}><td><strong>{r.appartamento}</strong></td><td>{match?<span className="match-ok">✅ {match.nome}</span>:<span className="match-ko">⚠️ non trovato</span>}</td><td>{r.check_out}</td><td>{r.check_in||'—'}</td><td>{r.ospiti_entranti||'—'}</td><td style={{fontSize:'12px',color:'#777'}}>{[r.categoria!=='-'?r.categoria:'',r.note!=='-'?r.note:''].filter(Boolean).join(' | ')||'—'}</td></tr>)})}</tbody>
             </table>
           </div>
           <div className="import-warning">⚠️ Le righe con "non trovato" verranno saltate.</div>
-          <button className="btn-import" onClick={eseguiImport} disabled={loading}>{loading ? 'Importazione...' : `⬆ Importa ${anteprima.length} prenotazioni`}</button>
+          <button className="btn-import" onClick={eseguiImport} disabled={loading}>{loading?'Importazione...':`⬆ Importa ${anteprima.length} prenotazioni`}</button>
         </div>
       )}
       {risultato && (
-        <div className={`import-result ${risultato.importate > 0 ? 'result-ok' : 'result-warn'}`}>
+        <div className={`import-result ${risultato.importate>0?'result-ok':'result-warn'}`}>
           <div className="result-row">✅ Importate: <strong>{risultato.importate}</strong></div>
           <div className="result-row">⏭ Saltate: <strong>{risultato.saltate}</strong></div>
-          {risultato.errori?.length > 0 && <div className="result-errors"><strong>Dettagli:</strong><ul>{risultato.errori.map((e, i) => <li key={i}>{e}</li>)}</ul></div>}
-          {risultato.importate > 0 && <p style={{ marginTop: '10px', color: '#2d6a4f' }}>Reindirizzamento...</p>}
+          {risultato.errori?.length>0&&<div className="result-errors"><strong>Dettagli:</strong><ul>{risultato.errori.map((e,i)=><li key={i}>{e}</li>)}</ul></div>}
+          {risultato.importate>0&&<p style={{marginTop:'10px',color:'#2d6a4f'}}>Reindirizzamento...</p>}
         </div>
       )}
     </div>
