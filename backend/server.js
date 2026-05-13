@@ -823,9 +823,11 @@ const fetchSmartPMSReservations = async () => {
     if (res.status === 401) { smartpmsTokenCache = { token: null, expiresAt: null }; throw new Error('Token SmartPMS scaduto'); }
     if (!res.ok) { const t = await res.text().catch(()=>''); throw new Error(`Errore SmartPMS: ${res.status} ${t.slice(0,200)}`); }
     const rawText = await res.text();
-    console.log(`SmartPMS raw (primi 500 char): ${rawText.slice(0,500)}`);
+    console.log(`SmartPMS raw (ultimi 300 char): ${rawText.slice(-300)}`);
     const data = JSON.parse(rawText);
-    console.log(`SmartPMS risposta: keys=${Object.keys(data).join(',')} data_type=${typeof data.data} data_isArr=${Array.isArray(data.data)} meta_type=${typeof data.meta}`);
+    console.log(`SmartPMS data keys: ${Object.keys(data.data||{}).join(',')}`);
+    console.log(`SmartPMS meta completo: ${JSON.stringify(data.meta)}`);
+    console.log(`SmartPMS data.data.pagination: ${JSON.stringify(data.data?.pagination)}`);
     // La struttura è: data.data.collection (array prenotazioni)
     let items = [];
     if (data.data && Array.isArray(data.data.collection)) {
