@@ -794,8 +794,25 @@ const getSmartPMSHeaders = async () => {
   return { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json', 'Content-Type': 'application/json', 'X-Platform': 'frontend', 'The-Timezone-Iana': 'Europe/Rome' };
 };
 
+const fetchSmartPMSUnits = async (headers) => {
+  try {
+    const res = await fetch('https://pms-api.smartness.com/api/3.0/units?perPage=200', { headers });
+    if (!res.ok) return {};
+    const raw = await res.text();
+    const data = JSON.parse(raw);
+    const units = data.data?.collection || data.data || (Array.isArray(data) ? data : []);
+    const map = {};
+    for (const u of (Array.isArray(units) ? units : [])) {
+      if (u.id && u.name) map[u.id] = u.name;
+    }
+    console.log(`SmartPMS units trovate: ${Object.keys(map).length}`);
+    return map;
+  } catch(e) { console.error('Errore fetch units:', e.message); return {}; }
+};
+
 const fetchSmartPMSReservations = async () => {
   const headers = await getSmartPMSHeaders();
+  const unitMap = await fetchSmartPMSUnits(headers);
   const oggi = new Date(), da = new Date(oggi), a = new Date(oggi);
   da.setDate(da.getDate() - 7); a.setDate(a.getDate() + 180);
   let tuttePrenotazioni = [], pagina = 1;
@@ -819,7 +836,7 @@ const fetchSmartPMSReservations = async () => {
       items = data;
     }
     console.log(`SmartPMS pagina ${pagina}: ${items.length} items (da data.data.collection)`);
-    for (const item of items) tuttePrenotazioni.push(item);
+    for (const item of items) tuttePrenotazioni.push({...item, _unitMap: unitMap});
     // Paginazione: meta può essere in data.meta o data.data.meta
     const meta = data.meta || data.data?.meta || {};
     console.log(`SmartPMS meta: ${JSON.stringify(meta)}`);
@@ -849,12 +866,17 @@ const trovaTramiteNomeSmartPMS = async (nome) => {
 };
 
 const normalizzaReservationSmartPMS = (r) => {
-  const unitName = r.unit?.name || '', propertyName = r.property?.name || '';
-  const checkIn = (r.start_date||r.arrival_date||'').slice(0,10), checkOut = (r.end_date||r.departure_date||'').slice(0,10);
-  const numOspiti = parseInt(r.guests||r.adults||1)||1;
-  const guestName = r.client ? `${r.client.first_name||''} ${r.client.last_name||''}`.trim() : '';
-  const cancellata = r.status===0||String(r.status||'').toLowerCase().includes('cancel');
-  return { unitName, propertyName, checkIn, checkOut, numOspiti, guestName, cancellata, reservationId: r.id };
+  const unitMap = r._unitMap || {};
+  // Prova prima unit.name, poi unitMap[unit_id], poi property name
+  const unitName = r.unit?.name || unitMap[r.unit_id] || '';
+  const propertyName = r.property?.name || unitMap[r.property_id] || '';
+  const checkIn = (r.start_date||r.arrival_date||r.checkin||'').slice(0,10);
+  const checkOut = (r.end_date||r.departure_date||r.checkout||'').slice(0,10);
+  const numOspiti = parseInt(r.guests||r.adults||r.number_of_guests||1)||1;
+  const guestName = r.given_name ? `${r.given_name||''} ${r.family_name||''}`.trim() : (r.client ? `${r.client.first_name||''} ${r.client.last_name||''}`.trim() : '');
+  // status 2 = confermata, 0 = cancellata (da verificare)
+  const cancellata = r.status===0||r.status==='0'||String(r.status||'').toLowerCase().includes('cancel');
+  return { unitName, propertyName, checkIn, checkOut, numOspiti, guestName, cancellata, reservationId: r.id, unitId: r.unit_id };
 };
 
 app.post('/api/sync/smartpms/anteprima', requireAuth, async (req, res) => {
@@ -871,7 +893,7 @@ app.post('/api/sync/smartpms/anteprima', requireAuth, async (req, res) => {
       const appNome = appartamento_id ? (await pool.query('SELECT nome FROM appartamenti WHERE id=$1', [appartamento_id])).rows[0]?.nome : null;
       let esistente = false;
       if (appartamento_id) { const dup = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, checkIn, checkOut]); esistente = dup.rows.length > 0; }
-      prenotazioni.push({ nome_smartpms: nomeUsato, unit_name: unitName, property_name: propertyName, appartamento_id, appartamento_nome: appNome, check_in: checkIn, check_out: checkOut, num_ospiti: numOspiti, guest_name: guestName, note: '', reservation_id: reservationId, esistente, mappato: !!appartamento_id });
+      prenotazioni.push({ nome_smartpms: nomeUsato || String(r.unitId||r.unit_id||''), unit_name: unitName, property_name: propertyName, unit_id: r.unitId||r.unit_id, appartamento_id, appartamento_nome: appNome, check_in: checkIn, check_out: checkOut, num_ospiti: numOspiti, guest_name: guestName, note: '', reservation_id: reservationId, esistente, mappato: !!appartamento_id });
     }
     res.json({ prenotazioni, totale: prenotazioni.length });
   } catch (err) { console.error('SmartPMS anteprima errore:', err.message); res.status(500).json({ errore: err.message }); }
