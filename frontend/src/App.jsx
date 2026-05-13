@@ -2,22 +2,32 @@ import { useState, useEffect } from 'react'
 import './App.css'
 
 const API_URL = 'https://gestione-prenotazioni-production.up.railway.app/api';
-
-// ============ AUTH HELPERS ============
 const getToken = () => localStorage.getItem('cg_token');
 const setToken = (t) => localStorage.setItem('cg_token', t);
 const removeToken = () => localStorage.removeItem('cg_token');
 const authHeaders = () => ({ 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` });
 
-// ============ EXPORT EXCEL ============
+const GIORNI_SETTIMANA = [
+  { key: 'lunedi', label: 'Lunedì', short: 'Lun' },
+  { key: 'martedi', label: 'Martedì', short: 'Mar' },
+  { key: 'mercoledi', label: 'Mercoledì', short: 'Mer' },
+  { key: 'giovedi', label: 'Giovedì', short: 'Gio' },
+  { key: 'venerdi', label: 'Venerdì', short: 'Ven' },
+  { key: 'sabato', label: 'Sabato', short: 'Sab' },
+  { key: 'domenica', label: 'Domenica', short: 'Dom' },
+];
+
+const getGiornoSettimana = (dateStr) => {
+  if (!dateStr) return null;
+  const [y, m, d] = dateStr.slice(0, 10).split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return ['domenica','lunedi','martedi','mercoledi','giovedi','venerdi','sabato'][date.getDay()];
+};
+
 const exportExcel = (dati, nomeFile, intestazioni, campi) => {
   try {
     if (typeof XLSX === 'undefined') { alert('Libreria XLSX non disponibile'); return; }
-    const righe = dati.map(r => {
-      const riga = {};
-      intestazioni.forEach((h, i) => { riga[h] = r[campi[i]] ?? ''; });
-      return riga;
-    });
+    const righe = dati.map(r => { const riga = {}; intestazioni.forEach((h, i) => { riga[h] = r[campi[i]] ?? ''; }); return riga; });
     const ws = XLSX.utils.json_to_sheet(righe);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Dati');
@@ -25,29 +35,23 @@ const exportExcel = (dati, nomeFile, intestazioni, campi) => {
   } catch(e) { alert('Errore export: ' + e.message); }
 };
 
-// ============ LOGIN PAGE ============
+/* ============ LOGIN ============ */
 function LoginPage({ onLogin }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [errore, setErrore] = useState('')
   const [loading, setLoading] = useState(false)
-
   const handleSubmit = async (e) => {
     e.preventDefault(); if (loading) return;
     setErrore(''); setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/auth/login`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
+      const res = await fetch(`${API_URL}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
       const data = await res.json();
       if (!res.ok) { setErrore(data.error || 'Credenziali non valide'); return; }
-      setToken(data.token);
-      onLogin(data.utente);
+      setToken(data.token); onLogin(data.utente);
     } catch { setErrore('Errore di connessione. Riprova.'); }
     finally { setLoading(false); }
   }
-
   return (
     <div className="login-page">
       <div className="login-box">
@@ -56,26 +60,16 @@ function LoginPage({ onLogin }) {
         <p className="login-subtitle">Accedi per continuare</p>
         <form onSubmit={handleSubmit} className="login-form">
           {errore && <div className="login-error">⚠️ {errore}</div>}
-          <div className="form-group">
-            <label>Email</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-              placeholder="La tua email" required autoFocus autoComplete="email" />
-          </div>
-          <div className="form-group">
-            <label>Password</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-              placeholder="La tua password" required autoComplete="current-password" />
-          </div>
-          <button type="submit" className="btn-login" disabled={loading}>
-            {loading ? '⏳ Accesso...' : '🔐 Accedi'}
-          </button>
+          <div className="form-group"><label>Email</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="La tua email" required autoFocus autoComplete="email" /></div>
+          <div className="form-group"><label>Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="La tua password" required autoComplete="current-password" /></div>
+          <button type="submit" className="btn-login" disabled={loading}>{loading ? '⏳ Accesso...' : '🔐 Accedi'}</button>
         </form>
       </div>
     </div>
   )
 }
 
-// ============ APP PRINCIPALE ============
+/* ============ APP ============ */
 function App() {
   const [utente, setUtente] = useState(null)
   const [appartamenti, setAppartamenti] = useState([])
@@ -84,9 +78,7 @@ function App() {
   const [vista, setVista] = useState('dashboard')
   const [loading, setLoading] = useState(true)
   const [authChecked, setAuthChecked] = useState(false)
-
   useEffect(() => { verificaAuth() }, [])
-
   const verificaAuth = async () => {
     const token = getToken();
     if (!token) { setAuthChecked(true); setLoading(false); return; }
@@ -97,7 +89,6 @@ function App() {
     } catch { removeToken(); }
     finally { setAuthChecked(true); setLoading(false); }
   }
-
   const caricaDati = async () => {
     try {
       const [appRes, prenRes, dipRes] = await Promise.all([
@@ -111,28 +102,13 @@ function App() {
       setDipendenti(await dipRes.json());
     } catch (err) { console.error('Errore caricamento dati:', err); }
   }
-
-  const handleLogin = async (utenteData) => {
-    setUtente(utenteData);
-    setLoading(true);
-    await caricaDati();
-    setLoading(false);
-  }
-
+  const handleLogin = async (utenteData) => { setUtente(utenteData); setLoading(true); await caricaDati(); setLoading(false); }
   const handleLogout = async () => {
     try { await fetch(`${API_URL}/auth/logout`, { method: 'POST', headers: authHeaders() }); } catch {}
     removeToken(); setUtente(null); setAppartamenti([]); setPrenotazioni([]); setDipendenti([]); setVista('dashboard');
   }
-
-  if (!authChecked || loading) return (
-    <div className="loading-screen">
-      <div className="loading-spinner" />
-      <p>Caricamento...</p>
-    </div>
-  )
-
+  if (!authChecked || loading) return (<div className="loading-screen"><div className="loading-spinner" /><p>Caricamento...</p></div>)
   if (!utente) return <LoginPage onLogin={handleLogin} />
-
   return (
     <div className="app">
       <header className="header">
@@ -168,41 +144,35 @@ function App() {
   )
 }
 
-/* ---------- DASHBOARD ---------- */
+/* ============ DASHBOARD ============ */
 function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
   const [modalita, setModalita] = useState('panoramica')
   const [orizzonte, setOrizzonte] = useState(14)
   const [giornoOffset, setGiornoOffset] = useState(0)
   const [assegnazioni, setAssegnazioni] = useState({})
-
   const oggi = new Date(); oggi.setHours(0, 0, 0, 0)
   const giornoSelezionato = new Date(oggi); giornoSelezionato.setDate(oggi.getDate() + giornoOffset)
   const fineOrizzonte = new Date(oggi); fineOrizzonte.setDate(oggi.getDate() + orizzonte)
-
   const toDateStr = (d) => {
     if (typeof d === 'string') return d.slice(0, 10)
     const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0')
     return `${y}-${m}-${dd}`
   }
-
   const prossimaPren = (appartamento_id, checkOutStr) => {
     return prenotazioni.filter(p => String(p.appartamento_id) === String(appartamento_id) && toDateStr(p.check_in) >= checkOutStr && toDateStr(p.check_out) !== checkOutStr && p.stato !== 'cancellata')
       .sort((a, b) => toDateStr(a.check_in).localeCompare(toDateStr(b.check_in)))[0] || null
   }
-
   const filtraPerGiorno = (giorno) => {
     const giornoStr = toDateStr(giorno)
     const normali = prenotazioni.filter(p => toDateStr(p.check_out) === giornoStr && p.tipo !== 'spot').map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, toDateStr(p.check_out)) }))
     const spot = prenotazioni.filter(p => p.tipo === 'spot' && toDateStr(p.check_out) === giornoStr).map(p => ({ ...p, prossima: null }))
     return [...normali, ...spot]
   }
-
   const pulizieOggi = filtraPerGiorno(oggi)
   const domani = new Date(oggi); domani.setDate(oggi.getDate() + 1)
   const pulizieFuture = prenotazioni.filter(p => { const co = toDateStr(p.check_out); return co >= toDateStr(domani) && co <= toDateStr(fineOrizzonte) })
     .sort((a, b) => toDateStr(a.check_out).localeCompare(toDateStr(b.check_out))).map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, toDateStr(p.check_out)) }))
   const pulizieGiornoSel = filtraPerGiorno(giornoSelezionato)
-
   const giorniA = (dateStr) => Math.round((new Date(toDateStr(dateStr)) - new Date(toDateStr(oggi))) / 86400000)
   const fmtData = (dateStr) => { const [y, m, d] = toDateStr(dateStr).split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' }) }
   const fmtDataLunga = (d) => d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })
@@ -210,13 +180,11 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
     if (offset === 0) return 'Oggi'; if (offset === 1) return 'Domani'; if (offset === -1) return 'Ieri'
     const d = new Date(oggi); d.setDate(oggi.getDate() + offset); return fmtDataLunga(d)
   }
-
   const salvaAssegnazione = async (prenId, dipId) => {
     setAssegnazioni(prev => ({ ...prev, [prenId]: dipId }))
     try { await fetch(`${API_URL}/prenotazioni/${prenId}/assegna`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ dipendente_id: dipId || null }) }) }
     catch (err) { console.error('Errore assegnazione:', err) }
   }
-
   const salvaStatoPulizia = async (prenId, stato, nuovaData) => {
     try { await fetch(`${API_URL}/prenotazioni/${prenId}/stato-pulizia`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ stato_pulizia: stato, nuova_data: nuovaData }) }); caricaDati() }
     catch (err) { console.error('Errore stato pulizia:', err) }
@@ -231,15 +199,12 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
     const [nuovaData, setNuovaData] = useState('')
     const [editNote, setEditNote] = useState(false)
     const [noteText, setNoteText] = useState(p.note || '')
+    const giornoCheckout = getGiornoSettimana(toDateStr(p.check_out))
     const cardClass = `pulizia-card ${evidenzia ? 'pulizia-oggi' : ''} ${statoPulizia === 'completata' ? 'pulizia-completata' : ''} ${statoPulizia === 'posticipata' ? 'pulizia-posticipata' : ''} ${p.tipo === 'spot' ? 'pulizia-spot' : ''}`
-
     const salvaNota = async () => {
-      try {
-        await fetch(`${API_URL}/prenotazioni/${p.id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ ...p, appartamento_id: p.appartamento_id, note: noteText }) })
-        caricaDati(); setEditNote(false)
-      } catch (err) { console.error('Errore salvataggio nota:', err) }
+      try { await fetch(`${API_URL}/prenotazioni/${p.id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ ...p, appartamento_id: p.appartamento_id, note: noteText }) }); caricaDati(); setEditNote(false) }
+      catch (err) { console.error('Errore salvataggio nota:', err) }
     }
-
     return (
       <div className={cardClass}>
         <div className="pulizia-header">
@@ -252,7 +217,11 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
           <div className="pulizia-header-right">
             <select className="assegna-select" value={dipAssegnato} onChange={e => salvaAssegnazione(p.id, e.target.value)}>
               <option value="">👤 Assegna...</option>
-              {dipendenti.map(d => <option key={d.id} value={d.id}>{d.nome_cognome}{d.patente ? ' 🚗' : ''}</option>)}
+              {dipendenti.map(d => {
+                const giorniOff = Array.isArray(d.giorni_off) ? d.giorni_off : [];
+                const haGiornoOff = giornoCheckout && giorniOff.includes(giornoCheckout);
+                return <option key={d.id} value={d.id}>{haGiornoOff ? '🌙 ' : ''}{d.nome_cognome}{d.patente ? ' 🚗' : ''}{haGiornoOff ? ' (riposo)' : ''}</option>;
+              })}
             </select>
             {modalita === 'panoramica' && p.tipo !== 'spot' && (
               <span className={`pulizia-quando ${gg === 0 ? 'tag-oggi' : gg === 1 ? 'tag-domani' : gg < 0 ? 'tag-passato' : 'tag-futuro'}`}>🧹 {label}</span>
@@ -299,26 +268,14 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
   }
 
   const pilloleOffsets = [-3, -2, -1, 0, 1, 2, 3].map(d => giornoOffset + d)
-
   return (
     <div className="dashboard">
       <div className="dash-header">
         <div style={{display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap'}}>
           <h2>{oggi.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h2>
           <button className="btn-sync" style={{fontSize:'13px'}} onClick={() => {
-            const dati = [...pulizieOggi, ...pulizieFuture].map(p => ({
-              appartamento: p.appartamento_nome || '',
-              checkout: p.check_out ? p.check_out.slice(0,10) : '',
-              prossimo_checkin: p.prossima?.check_in ? p.prossima.check_in.slice(0,10) : '',
-              ospiti: p.prossima?.num_ospiti || p.num_ospiti || '',
-              dipendente: p.dipendente_nome || '',
-              stato: p.stato_pulizia || 'da_fare',
-              note: p.note || ''
-            }));
-            exportExcel(dati, 'dashboard_pulizie',
-              ['Appartamento','Check-out','Prossimo Check-in','Ospiti','Dipendente','Stato','Note'],
-              ['appartamento','checkout','prossimo_checkin','ospiti','dipendente','stato','note']
-            );
+            const dati = [...pulizieOggi, ...pulizieFuture].map(p => ({ appartamento: p.appartamento_nome || '', checkout: p.check_out ? p.check_out.slice(0,10) : '', prossimo_checkin: p.prossima?.check_in ? p.prossima.check_in.slice(0,10) : '', ospiti: p.prossima?.num_ospiti || p.num_ospiti || '', dipendente: p.dipendente_nome || '', stato: p.stato_pulizia || 'da_fare', note: p.note || '' }));
+            exportExcel(dati, 'dashboard_pulizie', ['Appartamento','Check-out','Prossimo Check-in','Ospiti','Dipendente','Stato','Note'], ['appartamento','checkout','prossimo_checkin','ospiti','dipendente','stato','note']);
           }}>📥 Scarica Excel</button>
         </div>
         <div className="dash-controls">
@@ -376,22 +333,20 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
   )
 }
 
-/* ---------- LISTA DIPENDENTI ---------- */
+/* ============ LISTA DIPENDENTI ============ */
 function ListaDipendenti({ dipendenti, onUpdate }) {
   const [modificaId, setModificaId] = useState(null)
   const [formModifica, setFormModifica] = useState({})
   const [saving, setSaving] = useState(false)
   const [showNuovo, setShowNuovo] = useState(false)
-  const [formNuovo, setFormNuovo] = useState({ nome_cognome: '', ore_settimanali: '', patente: false })
+  const [formNuovo, setFormNuovo] = useState({ nome_cognome: '', ore_settimanali: '', patente: false, giorni_off: [] })
   const [errore, setErrore] = useState('')
-
-  const apriModifica = (d) => { setModificaId(d.id); setFormModifica({ nome_cognome: d.nome_cognome, ore_settimanali: d.ore_settimanali, patente: d.patente }) }
+  const apriModifica = (d) => { setModificaId(d.id); setFormModifica({ nome_cognome: d.nome_cognome, ore_settimanali: d.ore_settimanali, patente: d.patente, giorni_off: Array.isArray(d.giorni_off) ? d.giorni_off : [] }); }
+  const toggleGiornoOff = (giorni, giorno) => giorni.includes(giorno) ? giorni.filter(g => g !== giorno) : [...giorni, giorno];
   const salvaModifica = async (id) => {
     if (saving) return; setSaving(true)
-    try {
-      const res = await fetch(`${API_URL}/dipendenti/${id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(formModifica) })
-      if (res.ok) { setModificaId(null); onUpdate() } else { const d = await res.json().catch(() => ({})); alert(d.error || 'Errore') }
-    } catch { alert('Errore di connessione') } finally { setSaving(false) }
+    try { const res = await fetch(`${API_URL}/dipendenti/${id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(formModifica) }); if (res.ok) { setModificaId(null); onUpdate() } else { const d = await res.json().catch(() => ({})); alert(d.error || 'Errore') } }
+    catch { alert('Errore di connessione') } finally { setSaving(false) }
   }
   const elimina = async (id, nome) => {
     if (!confirm(`Eliminare "${nome}"?`)) return
@@ -401,14 +356,24 @@ function ListaDipendenti({ dipendenti, onUpdate }) {
   const salvanuovo = async () => {
     if (saving) return; if (!formNuovo.nome_cognome.trim()) { setErrore('Il nome è obbligatorio'); return }
     setErrore(''); setSaving(true)
-    try {
-      const res = await fetch(`${API_URL}/dipendenti`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(formNuovo) })
-      if (res.ok) { setShowNuovo(false); setFormNuovo({ nome_cognome: '', ore_settimanali: '', patente: false }); onUpdate() }
-      else { const d = await res.json().catch(() => ({})); setErrore(d.error || 'Errore') }
-    } catch { setErrore('Errore di connessione') } finally { setSaving(false) }
+    try { const res = await fetch(`${API_URL}/dipendenti`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(formNuovo) }); if (res.ok) { setShowNuovo(false); setFormNuovo({ nome_cognome: '', ore_settimanali: '', patente: false, giorni_off: [] }); onUpdate() } else { const d = await res.json().catch(() => ({})); setErrore(d.error || 'Errore') } }
+    catch { setErrore('Errore di connessione') } finally { setSaving(false) }
   }
   const upd = (field, value) => setFormModifica(prev => ({ ...prev, [field]: value }))
-
+  const GiorniOffSelector = ({ value, onChange }) => (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+      {GIORNI_SETTIMANA.map(g => (
+        <button key={g.key} type="button" onClick={() => onChange(toggleGiornoOff(value, g.key))}
+          style={{ padding: '3px 8px', fontSize: '11px', borderRadius: '12px', border: '1px solid', cursor: 'pointer', fontWeight: value.includes(g.key) ? 'bold' : 'normal', background: value.includes(g.key) ? '#fef3c7' : '#f3f4f6', borderColor: value.includes(g.key) ? '#f59e0b' : '#d1d5db', color: value.includes(g.key) ? '#92400e' : '#374151' }}>
+          {value.includes(g.key) ? '🌙 ' : ''}{g.short}
+        </button>
+      ))}
+    </div>
+  )
+  const fmtGiorniOff = (giorni) => {
+    if (!Array.isArray(giorni) || giorni.length === 0) return '—';
+    return giorni.map(g => GIORNI_SETTIMANA.find(gs => gs.key === g)?.short || g).join(', ');
+  }
   return (
     <div className="lista-dipendenti">
       <div className="section-header">
@@ -423,19 +388,36 @@ function ListaDipendenti({ dipendenti, onUpdate }) {
             <div className="form-group"><label>ORE CONTRATTUALI/SETTIMANA</label><input type="number" min="1" max="50" value={formNuovo.ore_settimanali} onChange={e => setFormNuovo({ ...formNuovo, ore_settimanali: e.target.value })} placeholder="Es. 40" /></div>
             <div className="form-group patente-group"><label>PATENTE</label><div className="toggle-patente"><input type="checkbox" id="patente-nuovo" checked={formNuovo.patente} onChange={e => setFormNuovo({ ...formNuovo, patente: e.target.checked })} /><label htmlFor="patente-nuovo" className="toggle-label">{formNuovo.patente ? '✅ Sì' : '❌ No'}</label></div></div>
           </div>
+          <div className="form-group" style={{ marginTop: '8px' }}>
+            <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', letterSpacing: '0.05em' }}>GIORNI DI RIPOSO 🌙</label>
+            <GiorniOffSelector value={formNuovo.giorni_off} onChange={giorni => setFormNuovo({ ...formNuovo, giorni_off: giorni })} />
+            <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>Indicatore visivo — non blocca l'assegnazione.</div>
+          </div>
           <button className="btn-save-inline" onClick={salvanuovo} disabled={saving}>{saving ? 'Salvataggio...' : 'Salva Dipendente'}</button>
         </div>
       )}
       <div className="table-container">
         <table>
-          <thead><tr><th>Nome Cognome</th><th>Ore/Settimana</th><th>Patente</th><th>Azioni</th></tr></thead>
+          <thead><tr><th>Nome Cognome</th><th>Ore/Settimana</th><th>Patente</th><th>Giorni Riposo</th><th>Azioni</th></tr></thead>
           <tbody>
             {dipendenti.map(d => (
               <tr key={d.id}>
                 {modificaId === d.id ? (
-                  <><td><input className="edit-input" value={formModifica.nome_cognome} onChange={e => upd('nome_cognome', e.target.value)} /></td><td><input className="edit-input" type="number" value={formModifica.ore_settimanali} onChange={e => upd('ore_settimanali', e.target.value)} /></td><td><select className="edit-input" value={formModifica.patente ? 'si' : 'no'} onChange={e => upd('patente', e.target.value === 'si')}><option value="si">✅ Sì</option><option value="no">❌ No</option></select></td><td style={{ whiteSpace: 'nowrap' }}><button className="btn-icon btn-confirm" onClick={() => salvaModifica(d.id)} disabled={saving}>{saving ? '…' : '✓'}</button><button className="btn-icon btn-cancel-icon" onClick={() => setModificaId(null)}>✕</button></td></>
+                  <>
+                    <td><input className="edit-input" value={formModifica.nome_cognome} onChange={e => upd('nome_cognome', e.target.value)} /></td>
+                    <td><input className="edit-input" type="number" value={formModifica.ore_settimanali} onChange={e => upd('ore_settimanali', e.target.value)} /></td>
+                    <td><select className="edit-input" value={formModifica.patente ? 'si' : 'no'} onChange={e => upd('patente', e.target.value === 'si')}><option value="si">✅ Sì</option><option value="no">❌ No</option></select></td>
+                    <td style={{ minWidth: '220px' }}><GiorniOffSelector value={formModifica.giorni_off || []} onChange={giorni => upd('giorni_off', giorni)} /></td>
+                    <td style={{ whiteSpace: 'nowrap' }}><button className="btn-icon btn-confirm" onClick={() => salvaModifica(d.id)} disabled={saving}>{saving ? '…' : '✓'}</button><button className="btn-icon btn-cancel-icon" onClick={() => setModificaId(null)}>✕</button></td>
+                  </>
                 ) : (
-                  <><td><strong>{d.nome_cognome}</strong></td><td>{d.ore_settimanali ? `${d.ore_settimanali}h` : '-'}</td><td>{d.patente ? '✅ Sì' : '❌ No'}</td><td style={{ whiteSpace: 'nowrap' }}><button className="btn-icon btn-edit" onClick={() => apriModifica(d)}>✏️</button><button className="btn-icon btn-trash" onClick={() => elimina(d.id, d.nome_cognome)}>🗑️</button></td></>
+                  <>
+                    <td><strong>{d.nome_cognome}</strong></td>
+                    <td>{d.ore_settimanali ? `${d.ore_settimanali}h` : '-'}</td>
+                    <td>{d.patente ? '✅ Sì' : '❌ No'}</td>
+                    <td>{Array.isArray(d.giorni_off) && d.giorni_off.length > 0 ? <span style={{ fontSize: '12px', color: '#92400e' }}>🌙 {fmtGiorniOff(d.giorni_off)}</span> : <span style={{ color: '#aaa', fontSize: '12px' }}>—</span>}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}><button className="btn-icon btn-edit" onClick={() => apriModifica(d)}>✏️</button><button className="btn-icon btn-trash" onClick={() => elimina(d.id, d.nome_cognome)}>🗑️</button></td>
+                  </>
                 )}
               </tr>
             ))}
@@ -446,21 +428,18 @@ function ListaDipendenti({ dipendenti, onUpdate }) {
   )
 }
 
-/* ---------- LISTA APPARTAMENTI ---------- */
+/* ============ LISTA APPARTAMENTI ============ */
 function ListaAppartamenti({ appartamenti, onUpdate }) {
   const [filtro, setFiltro] = useState('')
   const [modificaId, setModificaId] = useState(null)
   const [formModifica, setFormModifica] = useState({})
   const [saving, setSaving] = useState(false)
-
   const appartamentiFiltrati = appartamenti.filter(a => [a.nome, a.via, a.gestore, a.owner].filter(Boolean).some(v => v.toLowerCase().includes(filtro.toLowerCase())))
   const apriModifica = (a) => { setModificaId(a.id); setFormModifica({ owner: a.owner || '', gestore: a.gestore || '', via: a.via || '', nome: a.nome || '', prezzo: a.prezzo || '', biancheria: a.biancheria || '', logistica: a.logistica || '', pulizia: a.pulizia || '', letti_max: a.letti_max || '' }) }
   const salvaModifica = async (id) => {
     if (saving) return; setSaving(true)
-    try {
-      const res = await fetch(`${API_URL}/appartamenti/${id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(formModifica) })
-      if (res.ok) { setModificaId(null); onUpdate() } else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore') }
-    } catch { alert('Errore di connessione') } finally { setSaving(false) }
+    try { const res = await fetch(`${API_URL}/appartamenti/${id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(formModifica) }); if (res.ok) { setModificaId(null); onUpdate() } else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore') } }
+    catch { alert('Errore di connessione') } finally { setSaving(false) }
   }
   const eliminaAppartamento = async (id, nome) => {
     if (!confirm(`Eliminare "${nome}"?`)) return
@@ -468,27 +447,23 @@ function ListaAppartamenti({ appartamenti, onUpdate }) {
     catch { alert('Errore di connessione') }
   }
   const aggiornaField = (field, value) => setFormModifica(prev => ({ ...prev, [field]: value }))
-
   return (
     <div className="lista-appartamenti">
       <div className="section-header">
         <h2>Appartamenti</h2>
-        <button className="btn-sync" onClick={() => exportExcel(appartamentiFiltrati, 'appartamenti',
-          ['Nome','Via','Owner','Gestore','Prezzo €','Biancheria €','Logistica min','Pulizia min','Letti Max'],
-          ['nome','via','owner','gestore','prezzo','biancheria','logistica','pulizia','letti_max']
-        )}>📥 Scarica Excel</button>
+        <button className="btn-sync" onClick={() => exportExcel(appartamentiFiltrati, 'appartamenti', ['Nome','Via','Owner','Gestore','Prezzo €','Biancheria €','Logistica min','Pulizia min','Letti Max'], ['nome','via','owner','gestore','prezzo','biancheria','logistica','pulizia','letti_max'])}>📥 Scarica Excel</button>
       </div>
       <input type="text" placeholder="Cerca per nome, via, owner o gestore..." value={filtro} onChange={e => setFiltro(e.target.value)} className="search-input" />
       <div className="table-container">
         <table>
-          <thead><tr><th>Appartamento</th><th>Via</th><th>Owner</th><th>Gestore</th><th>Prezzo (€)</th><th>Biancheria (€)</th><th>Logistica (min)</th><th>Pulizia (min)</th><th>Letti Max</th><th>Azioni</th></tr></thead>
+          <thead><tr><th>Appartamento</th><th>Via</th><th>Owner</th><th>Gestore</th><th>Prezzo (€)</th><th>Biancheria (€/ospite)</th><th>Logistica (min)</th><th>Pulizia (min)</th><th>Letti Max</th><th>Azioni</th></tr></thead>
           <tbody>
             {appartamentiFiltrati.map(a => (
               <tr key={a.id}>
                 {modificaId === a.id ? (
                   <><td><input className="edit-input" value={formModifica.nome} onChange={e => aggiornaField('nome', e.target.value)} /></td><td><input className="edit-input" value={formModifica.via} onChange={e => aggiornaField('via', e.target.value)} /></td><td><input className="edit-input" value={formModifica.owner} onChange={e => aggiornaField('owner', e.target.value)} /></td><td><input className="edit-input" value={formModifica.gestore} onChange={e => aggiornaField('gestore', e.target.value)} /></td><td><input className="edit-input" type="number" step="0.01" value={formModifica.prezzo} onChange={e => aggiornaField('prezzo', e.target.value)} /></td><td><input className="edit-input" type="number" step="0.01" value={formModifica.biancheria} onChange={e => aggiornaField('biancheria', e.target.value)} /></td><td><input className="edit-input" type="number" value={formModifica.logistica} onChange={e => aggiornaField('logistica', e.target.value)} /></td><td><input className="edit-input" type="number" value={formModifica.pulizia} onChange={e => aggiornaField('pulizia', e.target.value)} /></td><td><input className="edit-input" type="number" value={formModifica.letti_max} onChange={e => aggiornaField('letti_max', e.target.value)} /></td><td style={{ whiteSpace: 'nowrap' }}><button className="btn-icon btn-confirm" onClick={() => salvaModifica(a.id)} disabled={saving}>{saving ? '…' : '✓'}</button><button className="btn-icon btn-cancel-icon" onClick={() => setModificaId(null)}>✕</button></td></>
                 ) : (
-                  <><td><strong>{a.nome}</strong></td><td>{a.via || '-'}</td><td>{a.owner || '-'}</td><td>{a.gestore || '-'}</td><td>{a.prezzo != null ? `€${Number(a.prezzo).toFixed(2)}` : '-'}</td><td>{a.biancheria != null ? `€${Number(a.biancheria).toFixed(2)}` : '-'}</td><td>{a.logistica != null ? `${Number(a.logistica)} min` : '-'}</td><td>{a.pulizia != null ? `${Number(a.pulizia)} min` : '-'}</td><td>{a.letti_max || '-'}</td><td style={{ whiteSpace: 'nowrap' }}><button className="btn-icon btn-edit" onClick={() => apriModifica(a)}>✏️</button><button className="btn-icon btn-trash" onClick={() => eliminaAppartamento(a.id, a.nome)}>🗑️</button></td></>
+                  <><td><strong>{a.nome}</strong></td><td>{a.via || '-'}</td><td>{a.owner || '-'}</td><td>{a.gestore || '-'}</td><td>{a.prezzo != null ? `€${Number(a.prezzo).toFixed(2)}` : '-'}</td><td>{a.biancheria != null ? `€${Number(a.biancheria).toFixed(2)}/osp` : '-'}</td><td>{a.logistica != null ? `${Number(a.logistica)} min` : '-'}</td><td>{a.pulizia != null ? `${Number(a.pulizia)} min` : '-'}</td><td>{a.letti_max || '-'}</td><td style={{ whiteSpace: 'nowrap' }}><button className="btn-icon btn-edit" onClick={() => apriModifica(a)}>✏️</button><button className="btn-icon btn-trash" onClick={() => eliminaAppartamento(a.id, a.nome)}>🗑️</button></td></>
                 )}
               </tr>
             ))}
@@ -499,7 +474,7 @@ function ListaAppartamenti({ appartamenti, onUpdate }) {
   )
 }
 
-/* ---------- LISTA PRENOTAZIONI ---------- */
+/* ============ LISTA PRENOTAZIONI ============ */
 function ListaPrenotazioni({ prenotazioni, appartamenti, onUpdate }) {
   const [modificaId, setModificaId] = useState(null)
   const [formModifica, setFormModifica] = useState({})
@@ -507,21 +482,17 @@ function ListaPrenotazioni({ prenotazioni, appartamenti, onUpdate }) {
   const [filtroAppartamento, setFiltroAppartamento] = useState('')
   const [filtroStato, setFiltroStato] = useState('')
   const [filtroData, setFiltroData] = useState('')
-
   const prenotazioniFiltrate = prenotazioni.filter(p => {
     const matchApp = !filtroAppartamento || (p.appartamento_nome || '').toLowerCase().includes(filtroAppartamento.toLowerCase())
     const matchStato = !filtroStato || p.stato === filtroStato
     const matchData = !filtroData || (p.check_in && p.check_in.slice(0, 10) <= filtroData && p.check_out && p.check_out.slice(0, 10) >= filtroData)
     return matchApp && matchStato && matchData
   })
-
   const apriModifica = (p) => { setModificaId(p.id); setFormModifica({ appartamento_id: p.appartamento_id, check_in: p.check_in ? p.check_in.slice(0, 10) : '', check_out: p.check_out ? p.check_out.slice(0, 10) : '', num_ospiti: p.num_ospiti, note: p.note || '', stato: p.stato }) }
   const salvaModifica = async (id) => {
     if (saving) return; setSaving(true)
-    try {
-      const res = await fetch(`${API_URL}/prenotazioni/${id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(formModifica) })
-      if (res.ok) { setModificaId(null); onUpdate() } else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore') }
-    } catch { alert('Errore di connessione') } finally { setSaving(false) }
+    try { const res = await fetch(`${API_URL}/prenotazioni/${id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(formModifica) }); if (res.ok) { setModificaId(null); onUpdate() } else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore') } }
+    catch { alert('Errore di connessione') } finally { setSaving(false) }
   }
   const eliminaPrenotazione = async (id) => {
     if (!confirm('Eliminare questa prenotazione?')) return
@@ -529,16 +500,12 @@ function ListaPrenotazioni({ prenotazioni, appartamenti, onUpdate }) {
   }
   const upd = (field, value) => setFormModifica(prev => ({ ...prev, [field]: value }))
   const hasFiltri = filtroAppartamento || filtroStato || filtroData
-
   return (
     <div className="lista-prenotazioni">
       <div className="section-header">
         <h2>Prenotazioni</h2>
         <span className="count-badge">{prenotazioniFiltrate.length} / {prenotazioni.length}</span>
-        <button className="btn-sync" onClick={() => exportExcel(prenotazioniFiltrate, 'prenotazioni',
-          ['Appartamento','Check-in','Check-out','Ospiti','Note','Stato'],
-          ['appartamento_nome','check_in','check_out','num_ospiti','note','stato']
-        )}>📥 Scarica Excel</button>
+        <button className="btn-sync" onClick={() => exportExcel(prenotazioniFiltrate, 'prenotazioni', ['Appartamento','Check-in','Check-out','Ospiti','Note','Stato'], ['appartamento_nome','check_in','check_out','num_ospiti','note','stato'])}>📥 Scarica Excel</button>
       </div>
       <div className="filtri-bar">
         <input type="text" placeholder="🔍 Cerca appartamento..." value={filtroAppartamento} onChange={e => setFiltroAppartamento(e.target.value)} className="search-input filtro-input" />
@@ -568,29 +535,22 @@ function ListaPrenotazioni({ prenotazioni, appartamenti, onUpdate }) {
   )
 }
 
-/* ---------- NUOVA PRENOTAZIONE ---------- */
+/* ============ NUOVA PRENOTAZIONE ============ */
 function NuovaPrenotazione({ appartamenti, onSave }) {
   const [tipo, setTipo] = useState('prenotazione')
   const [form, setForm] = useState({ appartamento_id: '', check_in: '', check_out: '', num_ospiti: 1, note: '' })
   const [formSpot, setFormSpot] = useState({ appartamento_id: '', data: '', num_ospiti: 1, note: '' })
   const [saving, setSaving] = useState(false)
-
   const handleSubmit = async (e) => {
     e.preventDefault(); if (saving) return; setSaving(true)
-    try {
-      const res = await fetch(`${API_URL}/prenotazioni`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(form) })
-      if (res.ok) { onSave() } else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore'); setSaving(false) }
-    } catch { alert('Errore di connessione'); setSaving(false) }
+    try { const res = await fetch(`${API_URL}/prenotazioni`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(form) }); if (res.ok) { onSave() } else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore'); setSaving(false) } }
+    catch { alert('Errore di connessione'); setSaving(false) }
   }
-
   const handleSubmitSpot = async (e) => {
     e.preventDefault(); if (saving) return; setSaving(true)
-    try {
-      const res = await fetch(`${API_URL}/prenotazioni`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ appartamento_id: formSpot.appartamento_id, check_in: formSpot.data, check_out: formSpot.data, num_ospiti: formSpot.num_ospiti, note: formSpot.note, tipo: 'spot', stato: 'confermata' }) })
-      if (res.ok) { onSave() } else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore'); setSaving(false) }
-    } catch { alert('Errore di connessione'); setSaving(false) }
+    try { const res = await fetch(`${API_URL}/prenotazioni`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ appartamento_id: formSpot.appartamento_id, check_in: formSpot.data, check_out: formSpot.data, num_ospiti: formSpot.num_ospiti, note: formSpot.note, tipo: 'spot', stato: 'confermata' }) }); if (res.ok) { onSave() } else { const data = await res.json().catch(() => ({})); alert(data.error || 'Errore'); setSaving(false) } }
+    catch { alert('Errore di connessione'); setSaving(false) }
   }
-
   return (
     <div className="nuova-prenotazione">
       <h2>Nuova Prenotazione</h2>
@@ -601,10 +561,7 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
       {tipo === 'prenotazione' && (
         <form onSubmit={handleSubmit}>
           <div className="form-group"><label>Appartamento *</label><select required value={form.appartamento_id} onChange={e => setForm({ ...form, appartamento_id: e.target.value })}><option value="">Seleziona appartamento...</option>{appartamenti.map(a => <option key={a.id} value={a.id}>{a.nome} - {a.via}</option>)}</select></div>
-          <div className="form-row">
-            <div className="form-group"><label>Check-in *</label><input type="date" required value={form.check_in} onChange={e => setForm({ ...form, check_in: e.target.value })} /></div>
-            <div className="form-group"><label>Check-out *</label><input type="date" required value={form.check_out} onChange={e => setForm({ ...form, check_out: e.target.value })} /></div>
-          </div>
+          <div className="form-row"><div className="form-group"><label>Check-in *</label><input type="date" required value={form.check_in} onChange={e => setForm({ ...form, check_in: e.target.value })} /></div><div className="form-group"><label>Check-out *</label><input type="date" required value={form.check_out} onChange={e => setForm({ ...form, check_out: e.target.value })} /></div></div>
           <div className="form-group"><label>Numero Ospiti</label><input type="number" min="1" value={form.num_ospiti} onChange={e => setForm({ ...form, num_ospiti: parseInt(e.target.value) })} /></div>
           <div className="form-group"><label>Note</label><textarea value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} placeholder="Note aggiuntive..." /></div>
           <button type="submit" className="btn-save" disabled={saving}>{saving ? 'Salvataggio...' : 'Salva Prenotazione'}</button>
@@ -624,20 +581,16 @@ function NuovaPrenotazione({ appartamenti, onSave }) {
   )
 }
 
-/* ---------- NUOVO APPARTAMENTO ---------- */
+/* ============ NUOVO APPARTAMENTO ============ */
 function NuovoAppartamento({ onSave }) {
   const [form, setForm] = useState({ owner: '', gestore: '', via: '', nome: '', prezzo: '', biancheria: '', logistica: '', pulizia: '', letti_max: '' })
   const [saving, setSaving] = useState(false)
   const [errore, setErrore] = useState('')
-
   const handleSubmit = async (e) => {
     e.preventDefault(); if (saving) return; setErrore(''); setSaving(true)
-    try {
-      const res = await fetch(`${API_URL}/appartamenti`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(form) })
-      if (res.ok) { onSave() } else { const data = await res.json().catch(() => ({})); setErrore(data.error || 'Errore'); setSaving(false) }
-    } catch { setErrore('Errore di connessione'); setSaving(false) }
+    try { const res = await fetch(`${API_URL}/appartamenti`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(form) }); if (res.ok) { onSave() } else { const data = await res.json().catch(() => ({})); setErrore(data.error || 'Errore'); setSaving(false) } }
+    catch { setErrore('Errore di connessione'); setSaving(false) }
   }
-
   return (
     <div className="nuovo-appartamento">
       <h2>Nuovo Appartamento</h2>
@@ -645,7 +598,7 @@ function NuovoAppartamento({ onSave }) {
       <form onSubmit={handleSubmit}>
         {['owner','gestore','via','nome','prezzo','biancheria','logistica','pulizia','letti_max'].map(field => (
           <div className="form-group" key={field}>
-            <label>{field.toUpperCase()}{field === 'nome' ? ' *' : ''}</label>
+            <label>{field.toUpperCase()}{field === 'nome' ? ' *' : ''}{field === 'biancheria' ? ' (€/ospite)' : ''}</label>
             <input type={['prezzo','biancheria','logistica','pulizia','letti_max'].includes(field) ? 'number' : 'text'} step="0.01" value={form[field]} onChange={e => setForm({...form, [field]: e.target.value})} required={field === 'nome'} />
           </div>
         ))}
@@ -655,7 +608,7 @@ function NuovoAppartamento({ onSave }) {
   )
 }
 
-/* ---------- IMPORT ---------- */
+/* ============ IMPORT ============ */
 function ImportItalianWay({ appartamenti, onImport }) {
   const [file, setFile] = useState(null)
   const [anteprima, setAnteprima] = useState([])
@@ -797,10 +750,8 @@ function ImportItalianWay({ appartamenti, onImport }) {
 
   const eseguiImport = async () => {
     if (!anteprima.length) return; setLoading(true); setRisultato(null)
-    try {
-      const res = await fetch(`${API_URL}/import/italianway`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ righe: anteprima }) })
-      const data = await res.json(); setRisultato(data); if (data.importate>0) setTimeout(()=>onImport(),1500)
-    } catch { setRisultato({ importate:0, saltate:0, errori:['Errore di connessione'] }) } finally { setLoading(false) }
+    try { const res = await fetch(`${API_URL}/import/italianway`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ righe: anteprima }) }); const data = await res.json(); setRisultato(data); if (data.importate>0) setTimeout(()=>onImport(),1500) }
+    catch { setRisultato({ importate:0, saltate:0, errori:['Errore di connessione'] }) } finally { setLoading(false) }
   }
 
   const fmtData = (d) => { if(!d) return '—'; const [y,m,dd]=d.slice(0,10).split('-').map(Number); return new Date(y,m-1,dd).toLocaleDateString('it-IT',{day:'numeric',month:'short',year:'numeric'}) }
@@ -835,7 +786,7 @@ function ImportItalianWay({ appartamenti, onImport }) {
       {/* SMARTPMS */}
       <div className="sync-panel" style={{marginTop:'16px'}}>
         <div className="sync-panel-header">
-          <div><h3>🏨 Sync da SmartPMS</h3><p className="sync-desc">Legge tutte le prenotazioni da SmartPMS in automatico.</p></div>
+          <div><h3>🏨 Sync da SmartPMS</h3><p className="sync-desc">Legge le prenotazioni confermate da SmartPMS.</p></div>
           <button className="btn-sync" onClick={async()=>{
             setSmartpmsLoading(true); setSmartpmsRisultato(null); setSmartpmsAnteprima([]);
             try {
@@ -895,7 +846,7 @@ function ImportItalianWay({ appartamenti, onImport }) {
                       <td style={{fontSize:'12px'}}>{p.check_in}</td>
                       <td style={{fontSize:'12px'}}>{p.check_out}</td>
                       <td><input type="number" min="1" max="20" className="edit-input" style={{width:'60px',textAlign:'center'}} value={smartpmsOspitiOverride[i]??p.num_ospiti??1} onChange={e=>setSmartpmsOspitiOverride(prev=>({...prev,[i]:parseInt(e.target.value)||1}))}/></td>
-                      <td><input type="text" className="edit-input" style={{width:'120px',fontSize:'11px'}} placeholder="Aggiungi nota..." value={p.note||''} onChange={e=>setSmartpmsAnteprima(prev=>prev.map((item,idx)=>idx===i?{...item,note:e.target.value}:item))}/></td>
+                      <td><input type="text" className="edit-input" style={{width:'120px',fontSize:'11px'}} placeholder="Nota..." value={p.note||''} onChange={e=>setSmartpmsAnteprima(prev=>prev.map((item,idx)=>idx===i?{...item,note:e.target.value}:item))}/></td>
                       <td>{p.esistente?<span style={{color:'#777',fontSize:'12px'}}>già presente</span>:<span style={{color:'#16a34a',fontSize:'12px'}}>da importare</span>}</td>
                     </tr>
                   ))}
@@ -905,8 +856,10 @@ function ImportItalianWay({ appartamenti, onImport }) {
             <div style={{display:'flex',gap:'12px',marginTop:'16px'}}>
               <button className="btn-import" disabled={smartpmsLoading} onClick={async()=>{
                 setSmartpmsLoading(true);
-                for(const [nome,appId] of Object.entries(smartpmsMappingTemp)){if(appId)await fetch(`${API_URL}/smartpms/mapping`,{method:'POST',headers:authHeaders(),body:JSON.stringify({nome_smartpms:nome,appartamento_id:parseInt(appId)})}).catch(()=>{});}
-                const daImportare=smartpmsAnteprima.filter((p,i)=>smartpmsSelezione[i]!==false&&!p.esistente).map(p=>{const i=smartpmsAnteprima.indexOf(p);return{...p,num_ospiti:smartpmsOspitiOverride[i]??p.num_ospiti??1,appartamento_id:smartpmsMappingTemp[p.nome_smartpms]?parseInt(smartpmsMappingTemp[p.nome_smartpms]):p.appartamento_id};});
+                const daImportare=smartpmsAnteprima.filter((p,i)=>smartpmsSelezione[i]!==false&&!p.esistente).map((p,_i)=>{
+                  const i=smartpmsAnteprima.indexOf(p);
+                  return{...p,num_ospiti:smartpmsOspitiOverride[i]??p.num_ospiti??1,appartamento_id:smartpmsMappingTemp[p.nome_smartpms]?parseInt(smartpmsMappingTemp[p.nome_smartpms]):p.appartamento_id};
+                });
                 try{const res=await fetch(`${API_URL}/sync/smartpms`,{method:'POST',headers:authHeaders(),body:JSON.stringify({prenotazioni:daImportare})});const data=await res.json();setSmartpmsRisultato(data);setSmartpmsAnteprima([]);if(data.importate>0)setTimeout(()=>onImport(),1500);}
                 catch{setSmartpmsRisultato({errori:['Errore connessione']});}finally{setSmartpmsLoading(false);}
               }}>
@@ -1043,7 +996,7 @@ function ImportItalianWay({ appartamenti, onImport }) {
       {/* SMOOBU */}
       <div className="sync-panel" style={{marginTop:'16px'}}>
         <div className="sync-panel-header">
-          <div><h3>🏠 Sync da Smoobu</h3><p className="sync-desc">Sincronizza automaticamente alle 02:00 e 07:00 UTC.</p></div>
+          <div><h3>🏠 Sync da Smoobu</h3><p className="sync-desc">Sincronizza prenotazioni da Smoobu.</p></div>
           <button className="btn-sync" onClick={async()=>{
             setSmoobuLoading(true); setSmoobuRisultato(null); setSmoobuAnteprima([]);
             try{
@@ -1148,172 +1101,74 @@ function ImportItalianWay({ appartamenti, onImport }) {
   )
 }
 
-
-/* ---------- REPORT ORE DIPENDENTI ---------- */
+/* ============ REPORT ORE DIPENDENTI ============ */
 function ReportOreDipendenti({ prenotazioni, dipendenti, appartamenti }) {
   const oggi = new Date(); oggi.setHours(0,0,0,0);
-
-  // Calcola lunedì e domenica della settimana corrente come default
-  const lunediDefault = new Date(oggi);
-  lunediDefault.setDate(oggi.getDate() - ((oggi.getDay() + 6) % 7));
-  const domenicaDefault = new Date(lunediDefault);
-  domenicaDefault.setDate(lunediDefault.getDate() + 6);
-
+  const lunediDefault = new Date(oggi); lunediDefault.setDate(oggi.getDate() - ((oggi.getDay() + 6) % 7));
+  const domenicaDefault = new Date(lunediDefault); domenicaDefault.setDate(lunediDefault.getDate() + 6);
   const toDateStr = (d) => typeof d === 'string' ? d.slice(0,10) : d.toISOString().slice(0,10);
   const fmtData = (d) => new Date(d + 'T00:00:00').toLocaleDateString('it-IT', {day:'numeric', month:'short', year:'numeric'});
-
   const [dataInizio, setDataInizio] = useState(toDateStr(lunediDefault));
   const [dataFine, setDataFine] = useState(toDateStr(domenicaDefault));
-
-  // Shortcut periodi
-  const setSettimanaCorrente = () => {
-    const l = new Date(oggi); l.setDate(oggi.getDate() - ((oggi.getDay() + 6) % 7));
-    const d = new Date(l); d.setDate(l.getDate() + 6);
-    setDataInizio(toDateStr(l)); setDataFine(toDateStr(d));
-  };
-  const setSettimanaScorsa = () => {
-    const l = new Date(oggi); l.setDate(oggi.getDate() - ((oggi.getDay() + 6) % 7) - 7);
-    const d = new Date(l); d.setDate(l.getDate() + 6);
-    setDataInizio(toDateStr(l)); setDataFine(toDateStr(d));
-  };
-  const setMeseCorrente = () => {
-    const inizio = new Date(oggi.getFullYear(), oggi.getMonth(), 1);
-    const fine = new Date(oggi.getFullYear(), oggi.getMonth() + 1, 0);
-    setDataInizio(toDateStr(inizio)); setDataFine(toDateStr(fine));
-  };
-  const setMeseScorso = () => {
-    const inizio = new Date(oggi.getFullYear(), oggi.getMonth() - 1, 1);
-    const fine = new Date(oggi.getFullYear(), oggi.getMonth(), 0);
-    setDataInizio(toDateStr(inizio)); setDataFine(toDateStr(fine));
-  };
-
-  // Filtra pulizie nel range selezionato (check_out in range)
-  const pulizieSettimana = prenotazioni.filter(p => {
-    if (!p.check_out || p.stato === 'cancellata') return false;
-    const co = toDateStr(p.check_out);
-    return co >= dataInizio && co <= dataFine;
-  });
-
-  // Per ogni dipendente calcola le ore
+  const setSettimanaCorrente = () => { const l = new Date(oggi); l.setDate(oggi.getDate() - ((oggi.getDay() + 6) % 7)); const d = new Date(l); d.setDate(l.getDate() + 6); setDataInizio(toDateStr(l)); setDataFine(toDateStr(d)); };
+  const setSettimanaScorsa = () => { const l = new Date(oggi); l.setDate(oggi.getDate() - ((oggi.getDay() + 6) % 7) - 7); const d = new Date(l); d.setDate(l.getDate() + 6); setDataInizio(toDateStr(l)); setDataFine(toDateStr(d)); };
+  const setMeseCorrente = () => { const inizio = new Date(oggi.getFullYear(), oggi.getMonth(), 1); const fine = new Date(oggi.getFullYear(), oggi.getMonth() + 1, 0); setDataInizio(toDateStr(inizio)); setDataFine(toDateStr(fine)); };
+  const setMeseScorso = () => { const inizio = new Date(oggi.getFullYear(), oggi.getMonth() - 1, 1); const fine = new Date(oggi.getFullYear(), oggi.getMonth(), 0); setDataInizio(toDateStr(inizio)); setDataFine(toDateStr(fine)); };
+  const pulizieSettimana = prenotazioni.filter(p => { if (!p.check_out || p.stato === 'cancellata') return false; const co = toDateStr(p.check_out); return co >= dataInizio && co <= dataFine; });
   const reportDipendenti = dipendenti.map(dip => {
     const pulizieDip = pulizieSettimana.filter(p => String(p.dipendente_id) === String(dip.id));
-    
     let minTotali = 0;
     const dettaglio = pulizieDip.map(p => {
       const app = appartamenti.find(a => String(a.id) === String(p.appartamento_id));
-      const minPulizia = parseInt(app?.pulizia || 0);
-      const minLogistica = parseInt(app?.logistica || 0);
-      const minTot = minPulizia + minLogistica;
+      const minPulizia = parseInt(app?.pulizia || 0), minLogistica = parseInt(app?.logistica || 0), minTot = minPulizia + minLogistica;
       minTotali += minTot;
       return { appartamento: p.appartamento_nome || app?.nome || '', checkout: toDateStr(p.check_out), minPulizia, minLogistica, minTot, statoPulizia: p.stato_pulizia || 'da_fare' };
     });
-
     return { dipendente: dip, minTotali, ore: Math.floor(minTotali/60), minuti: minTotali%60, numPulizie: pulizieDip.length, dettaglio };
-  }).filter(r => r.numPulizie > 0 || true); // mostra tutti
-
+  });
   const totaleMinuti = reportDipendenti.reduce((acc, r) => acc + r.minTotali, 0);
-
   const esportaReport = () => {
     const righe = [];
     for (const r of reportDipendenti) {
       if (r.numPulizie === 0) continue;
-      for (const d of r.dettaglio) {
-        righe.push({
-          Dipendente: r.dipendente.nome_cognome,
-          Appartamento: d.appartamento,
-          'Check-out': d.checkout,
-          'Min Pulizia': d.minPulizia,
-          'Min Logistica': d.minLogistica,
-          'Min Totali': d.minTot,
-          'Stato Pulizia': d.statoPulizia
-        });
-      }
-      righe.push({
-        Dipendente: `TOTALE ${r.dipendente.nome_cognome}`,
-        Appartamento: `${r.numPulizie} pulizie`,
-        'Check-out': '',
-        'Min Pulizia': '',
-        'Min Logistica': '',
-        'Min Totali': r.minTotali,
-        'Stato Pulizia': `${r.ore}h ${r.minuti}min`
-      });
+      for (const d of r.dettaglio) { righe.push({ Dipendente: r.dipendente.nome_cognome, Appartamento: d.appartamento, 'Check-out': d.checkout, 'Min Pulizia': d.minPulizia, 'Min Logistica': d.minLogistica, 'Min Totali': d.minTot, 'Stato Pulizia': d.statoPulizia }); }
+      righe.push({ Dipendente: `TOTALE ${r.dipendente.nome_cognome}`, Appartamento: `${r.numPulizie} pulizie`, 'Check-out': '', 'Min Pulizia': '', 'Min Logistica': '', 'Min Totali': r.minTotali, 'Stato Pulizia': `${r.ore}h ${r.minuti}min` });
     }
-    exportExcel(righe, `report_ore_${dataInizio}_${dataFine}`,
-      ['Dipendente','Appartamento','Check-out','Min Pulizia','Min Logistica','Min Totali','Stato Pulizia'],
-      ['Dipendente','Appartamento','Check-out','Min Pulizia','Min Logistica','Min Totali','Stato Pulizia']
-    );
+    exportExcel(righe, `report_ore_${dataInizio}_${dataFine}`, ['Dipendente','Appartamento','Check-out','Min Pulizia','Min Logistica','Min Totali','Stato Pulizia'], ['Dipendente','Appartamento','Check-out','Min Pulizia','Min Logistica','Min Totali','Stato Pulizia']);
   };
-
   return (
     <div style={{padding:'24px'}}>
       <div style={{marginBottom:'20px'}}>
         <div className="section-header" style={{marginBottom:'12px'}}>
-          <div>
-            <h2>📊 Report Ore Dipendenti</h2>
-            <p style={{color:'#666', fontSize:'14px', margin:'4px 0 0'}}>
-              Totale ore stimate: <strong>{Math.floor(totaleMinuti/60)}h {totaleMinuti%60}min</strong>
-              {' '}· {pulizieSettimana.length} pulizie nel periodo
-            </p>
-          </div>
+          <div><h2>📊 Report Ore Dipendenti</h2><p style={{color:'#666', fontSize:'14px', margin:'4px 0 0'}}>Totale ore stimate: <strong>{Math.floor(totaleMinuti/60)}h {totaleMinuti%60}min</strong> · {pulizieSettimana.length} pulizie nel periodo</p></div>
           <button className="btn-sync" onClick={esportaReport} disabled={reportDipendenti.every(r=>r.numPulizie===0)}>📥 Scarica Excel</button>
         </div>
-
-        {/* Selettore periodo */}
         <div style={{background:'white', border:'1px solid #e5e7eb', borderRadius:'12px', padding:'16px', display:'flex', gap:'12px', alignItems:'center', flexWrap:'wrap'}}>
-          <div style={{display:'flex', alignItems:'center', gap:'8px'}}>
-            <label style={{fontSize:'13px', fontWeight:'600', color:'#374151'}}>Dal:</label>
-            <input type="date" className="edit-input" style={{width:'150px'}} value={dataInizio} onChange={e=>setDataInizio(e.target.value)} />
-          </div>
-          <div style={{display:'flex', alignItems:'center', gap:'8px'}}>
-            <label style={{fontSize:'13px', fontWeight:'600', color:'#374151'}}>Al:</label>
-            <input type="date" className="edit-input" style={{width:'150px'}} value={dataFine} onChange={e=>setDataFine(e.target.value)} />
-          </div>
+          <div style={{display:'flex', alignItems:'center', gap:'8px'}}><label style={{fontSize:'13px', fontWeight:'600', color:'#374151'}}>Dal:</label><input type="date" className="edit-input" style={{width:'150px'}} value={dataInizio} onChange={e=>setDataInizio(e.target.value)} /></div>
+          <div style={{display:'flex', alignItems:'center', gap:'8px'}}><label style={{fontSize:'13px', fontWeight:'600', color:'#374151'}}>Al:</label><input type="date" className="edit-input" style={{width:'150px'}} value={dataFine} onChange={e=>setDataFine(e.target.value)} /></div>
           <div style={{display:'flex', gap:'6px', flexWrap:'wrap'}}>
             <button className="btn-pulizia btn-completa" style={{fontSize:'12px', padding:'6px 10px'}} onClick={setSettimanaCorrente}>Settimana corrente</button>
             <button className="btn-pulizia btn-annulla-stato" style={{fontSize:'12px', padding:'6px 10px'}} onClick={setSettimanaScorsa}>Settimana scorsa</button>
             <button className="btn-pulizia btn-completa" style={{fontSize:'12px', padding:'6px 10px'}} onClick={setMeseCorrente}>Mese corrente</button>
             <button className="btn-pulizia btn-annulla-stato" style={{fontSize:'12px', padding:'6px 10px'}} onClick={setMeseScorso}>Mese scorso</button>
           </div>
-          {dataInizio && dataFine && (
-            <span style={{fontSize:'12px', color:'#888', marginLeft:'4px'}}>
-              📅 {fmtData(dataInizio)} → {fmtData(dataFine)}
-            </span>
-          )}
+          {dataInizio && dataFine && <span style={{fontSize:'12px', color:'#888', marginLeft:'4px'}}>📅 {fmtData(dataInizio)} → {fmtData(dataFine)}</span>}
         </div>
       </div>
-
       {reportDipendenti.map(r => (
         <div key={r.dipendente.id} className="sync-panel" style={{marginBottom:'16px'}}>
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: r.numPulizie > 0 ? '12px' : '0'}}>
             <div>
               <strong style={{fontSize:'16px'}}>{r.dipendente.nome_cognome}</strong>
               {r.dipendente.patente && <span style={{marginLeft:'8px', fontSize:'12px'}}>🚗</span>}
-              <span style={{marginLeft:'12px', color:'#666', fontSize:'13px'}}>
-                {r.numPulizie > 0 ? `${r.numPulizie} pulizie · ` : 'Nessuna pulizia assegnata · '}
-                <strong style={{color: r.numPulizie > 0 ? '#2d5a3d' : '#999'}}>
-                  {r.ore}h {r.minuti}min
-                </strong>
-              </span>
+              <span style={{marginLeft:'12px', color:'#666', fontSize:'13px'}}>{r.numPulizie > 0 ? `${r.numPulizie} pulizie · ` : 'Nessuna pulizia assegnata · '}<strong style={{color: r.numPulizie > 0 ? '#2d5a3d' : '#999'}}>{r.ore}h {r.minuti}min</strong></span>
             </div>
-            <div style={{textAlign:'right'}}>
-              <div style={{fontSize:'20px', fontWeight:'bold', color:'#2d5a3d'}}>{r.ore}h {r.minuti}min</div>
-              <div style={{fontSize:'11px', color:'#888'}}>{r.minTotali} min totali</div>
-            </div>
+            <div style={{textAlign:'right'}}><div style={{fontSize:'20px', fontWeight:'bold', color:'#2d5a3d'}}>{r.ore}h {r.minuti}min</div><div style={{fontSize:'11px', color:'#888'}}>{r.minTotali} min totali</div></div>
           </div>
-
           {r.numPulizie > 0 && (
             <div className="table-container">
               <table>
-                <thead>
-                  <tr>
-                    <th>Appartamento</th>
-                    <th>Check-out</th>
-                    <th>Pulizia</th>
-                    <th>Logistica</th>
-                    <th>Totale</th>
-                    <th>Stato</th>
-                  </tr>
-                </thead>
+                <thead><tr><th>Appartamento</th><th>Check-out</th><th>Pulizia</th><th>Logistica</th><th>Totale</th><th>Stato</th></tr></thead>
                 <tbody>
                   {r.dettaglio.map((d, i) => (
                     <tr key={i}>
@@ -1322,251 +1177,166 @@ function ReportOreDipendenti({ prenotazioni, dipendenti, appartamenti }) {
                       <td>{d.minPulizia > 0 ? `${d.minPulizia} min` : <span style={{color:'#aaa'}}>—</span>}</td>
                       <td>{d.minLogistica > 0 ? `${d.minLogistica} min` : <span style={{color:'#aaa'}}>—</span>}</td>
                       <td><strong>{d.minTot} min</strong></td>
-                      <td>
-                        <span style={{
-                          fontSize:'11px', padding:'2px 8px', borderRadius:'12px',
-                          background: d.statoPulizia === 'completata' ? '#dcfce7' : d.statoPulizia === 'posticipata' ? '#fef3c7' : '#f3f4f6',
-                          color: d.statoPulizia === 'completata' ? '#166534' : d.statoPulizia === 'posticipata' ? '#92400e' : '#374151'
-                        }}>
-                          {d.statoPulizia === 'completata' ? '✅ Completata' : d.statoPulizia === 'posticipata' ? '⏭ Posticipata' : '🔲 Da fare'}
-                        </span>
-                      </td>
+                      <td><span style={{fontSize:'11px', padding:'2px 8px', borderRadius:'12px', background: d.statoPulizia === 'completata' ? '#dcfce7' : d.statoPulizia === 'posticipata' ? '#fef3c7' : '#f3f4f6', color: d.statoPulizia === 'completata' ? '#166534' : d.statoPulizia === 'posticipata' ? '#92400e' : '#374151'}}>{d.statoPulizia === 'completata' ? '✅ Completata' : d.statoPulizia === 'posticipata' ? '⏭ Posticipata' : '🔲 Da fare'}</span></td>
                     </tr>
                   ))}
                 </tbody>
-                <tfoot>
-                  <tr style={{background:'#f9fafb', fontWeight:'bold'}}>
-                    <td colSpan={4} style={{textAlign:'right', paddingRight:'12px'}}>Totale settimana:</td>
-                    <td><strong style={{color:'#2d5a3d'}}>{r.minTotali} min ({r.ore}h {r.minuti}min)</strong></td>
-                    <td></td>
-                  </tr>
-                </tfoot>
+                <tfoot><tr style={{background:'#f9fafb', fontWeight:'bold'}}><td colSpan={4} style={{textAlign:'right', paddingRight:'12px'}}>Totale settimana:</td><td><strong style={{color:'#2d5a3d'}}>{r.minTotali} min ({r.ore}h {r.minuti}min)</strong></td><td></td></tr></tfoot>
               </table>
             </div>
           )}
         </div>
       ))}
-
       {reportDipendenti.every(r => r.numPulizie === 0) && (
-        <div className="sync-panel" style={{textAlign:'center', color:'#888', padding:'40px'}}>
-          Nessuna pulizia assegnata nel periodo {fmtData(dataInizio)} – {fmtData(dataFine)}
-        </div>
+        <div className="sync-panel" style={{textAlign:'center', color:'#888', padding:'40px'}}>Nessuna pulizia assegnata nel periodo {fmtData(dataInizio)} – {fmtData(dataFine)}</div>
       )}
     </div>
   );
 }
 
-
-/* ---------- FATTURAZIONE APPARTAMENTI ---------- */
+/* ============ FATTURAZIONE APPARTAMENTI ============ */
 function FatturazioneAppartamenti({ prenotazioni, appartamenti, dipendenti }) {
   const oggi = new Date();
   const [meseSelezionato, setMeseSelezionato] = useState(oggi.getMonth());
   const [annoSelezionato, setAnnoSelezionato] = useState(oggi.getFullYear());
-
+  const [extra, setExtra] = useState({});
   const mesi = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
   const anni = [oggi.getFullYear() - 1, oggi.getFullYear(), oggi.getFullYear() + 1];
-
   const toDateStr = (d) => typeof d === 'string' ? d.slice(0,10) : d.toISOString().slice(0,10);
-
-  // Filtra prenotazioni del mese selezionato (per check_out)
   const prenotazioneMese = prenotazioni.filter(p => {
     if (!p.check_out || p.stato === 'cancellata') return false;
     const co = new Date(p.check_out.slice(0,10));
     return co.getMonth() === meseSelezionato && co.getFullYear() === annoSelezionato;
   });
-
-  // Raggruppa per appartamento
   const recapPerAppartamento = appartamenti.map(app => {
     const pulizie = prenotazioneMese.filter(p => String(p.appartamento_id) === String(app.id));
     const numPulizie = pulizie.length;
     const prezzoUnitario = parseFloat(app.pulizia_costo || app.prezzo || 0);
     const costoImponibile = prezzoUnitario * numPulizie;
-    const biancheriaUnit = parseFloat(app.biancheria || 0);
-    const costoImponibileBiancheria = biancheriaUnit * numPulizie;
-    const totale = costoImponibile + costoImponibileBiancheria;
-
-    const dipendentiUsati = [...new Set(pulizie.map(p => p.dipendente_id).filter(Boolean))].map(id => {
-      const dip = dipendenti.find(d => String(d.id) === String(id));
-      return dip?.nome_cognome || '';
-    }).filter(Boolean);
-
-    return {
-      app,
-      numPulizie,
-      prezzoUnitario,
-      costoImponibile,
-      biancheriaUnit,
-      costoImponibileBiancheria,
-      totale,
-      dipendentiUsati,
-      pulizie
-    };
+    const biancheriaUnitaria = parseFloat(app.biancheria || 0);
+    // BIANCHERIA MOLTIPLICATA PER NUMERO OSPITI
+    const costoImponibileBiancheria = pulizie.reduce((acc, p) => acc + biancheriaUnitaria * (parseInt(p.num_ospiti) || 1), 0);
+    const extraApp = parseFloat(extra[app.id] || 0);
+    const totale = costoImponibile + costoImponibileBiancheria + extraApp;
+    const dipendentiUsati = [...new Set(pulizie.map(p => p.dipendente_id).filter(Boolean))].map(id => { const dip = dipendenti.find(d => String(d.id) === String(id)); return dip?.nome_cognome || ''; }).filter(Boolean);
+    return { app, numPulizie, prezzoUnitario, costoImponibile, biancheriaUnitaria, costoImponibileBiancheria, extraApp, totale, dipendentiUsati, pulizie };
   }).filter(r => r.numPulizie > 0);
-
   const totaleGenerale = recapPerAppartamento.reduce((acc, r) => acc + r.totale, 0);
   const totalePulizie = recapPerAppartamento.reduce((acc, r) => acc + r.costoImponibile, 0);
   const totaleBiancheria = recapPerAppartamento.reduce((acc, r) => acc + r.costoImponibileBiancheria, 0);
+  const totaleExtra = recapPerAppartamento.reduce((acc, r) => acc + r.extraApp, 0);
   const totalePulizieNum = recapPerAppartamento.reduce((acc, r) => acc + r.numPulizie, 0);
-
   const fmtEuro = (v) => `€${Number(v).toFixed(2)}`;
   const fmtData = (d) => new Date(d).toLocaleDateString('it-IT', {day:'numeric', month:'short'});
-
   const esportaExcel = () => {
     const righe = [];
     for (const r of recapPerAppartamento) {
       for (const p of r.pulizie) {
         const dip = dipendenti.find(d => String(d.id) === String(p.dipendente_id));
-        righe.push({
-          'Appartamento': r.app.nome,
-          'Owner': r.app.owner || '',
-          'Gestore': r.app.gestore || '',
-          'Data Pulizia': p.check_out ? p.check_out.slice(0,10) : '',
-          'Check-in': p.check_in ? p.check_in.slice(0,10) : '',
-          'Num Ospiti': p.num_ospiti || '',
-          'Dipendente': dip?.nome_cognome || '',
-          'Stato': p.stato_pulizia || 'da_fare',
-          'Costo Pulizia €': r.prezzoUnitario,
-          'Costo Biancheria €': r.biancheriaUnit,
-          'Totale Pulizia €': r.prezzoUnitario + r.biancheriaUnit
-        });
+        const numOspiti = parseInt(p.num_ospiti) || 1;
+        const biancheriaRiga = r.biancheriaUnitaria * numOspiti;
+        righe.push({ 'Appartamento': r.app.nome, 'Owner': r.app.owner || '', 'Gestore': r.app.gestore || '', 'Data Pulizia': p.check_out ? p.check_out.slice(0,10) : '', 'Check-in': p.check_in ? p.check_in.slice(0,10) : '', 'Num Ospiti': numOspiti, 'Dipendente': dip?.nome_cognome || '', 'Stato': p.stato_pulizia || 'da_fare', 'Note': p.note || '', 'Costo Pulizia €': r.prezzoUnitario, 'Biancheria €': biancheriaRiga, 'Totale Riga €': r.prezzoUnitario + biancheriaRiga });
       }
-      righe.push({
-        'Appartamento': `SUBTOTALE — ${r.app.nome}`,
-        'Owner': '',
-        'Gestore': '',
-        'Data Pulizia': `${r.numPulizie} pulizie`,
-        'Dipendente': r.dipendentiUsati.join(', '),
-        'Stato': '',
-        'Costo Pulizia €': r.costoImponibile,
-        'Costo Biancheria €': r.costoImponibileBiancheria,
-        'Totale Pulizia €': r.totale
-      });
+      if (r.extraApp !== 0) { righe.push({ 'Appartamento': r.app.nome, 'Data Pulizia': 'EXTRA', 'Note': r.extraApp > 0 ? 'Supplemento' : 'Sconto', 'Totale Riga €': r.extraApp }); }
+      righe.push({ 'Appartamento': `SUBTOTALE — ${r.app.nome}`, 'Data Pulizia': `${r.numPulizie} pulizie`, 'Dipendente': r.dipendentiUsati.join(', '), 'Costo Pulizia €': r.costoImponibile, 'Biancheria €': r.costoImponibileBiancheria, 'Totale Riga €': r.totale });
       righe.push({});
     }
-    righe.push({
-      'Appartamento': 'TOTALE GENERALE',
-      'Owner': '',
-      'Gestore': '',
-      'Data Pulizia': `${totalePulizieNum} pulizie`,
-      'Dipendente': '',
-      'Stato': '',
-      'Costo Pulizia €': totalePulizie,
-      'Costo Biancheria €': totaleBiancheria,
-      'Totale Pulizia €': totaleGenerale
-    });
-    exportExcel(righe, `fatturazione_${mesi[meseSelezionato]}_${annoSelezionato}`,
-      ['Appartamento','Owner','Gestore','Data Pulizia','Check-in','Num Ospiti','Dipendente','Stato','Costo Pulizia €','Costo Biancheria €','Totale Pulizia €'],
-      ['Appartamento','Owner','Gestore','Data Pulizia','Check-in','Num Ospiti','Dipendente','Stato','Costo Pulizia €','Costo Biancheria €','Totale Pulizia €']
-    );
+    righe.push({ 'Appartamento': 'TOTALE GENERALE', 'Data Pulizia': `${totalePulizieNum} pulizie`, 'Costo Pulizia €': totalePulizie, 'Biancheria €': totaleBiancheria, 'Totale Riga €': totaleGenerale });
+    exportExcel(righe, `fatturazione_${mesi[meseSelezionato]}_${annoSelezionato}`, ['Appartamento','Owner','Gestore','Data Pulizia','Check-in','Num Ospiti','Dipendente','Stato','Note','Costo Pulizia €','Biancheria €','Totale Riga €'], ['Appartamento','Owner','Gestore','Data Pulizia','Check-in','Num Ospiti','Dipendente','Stato','Note','Costo Pulizia €','Biancheria €','Totale Riga €']);
   };
-
   return (
     <div style={{padding:'24px'}}>
-      {/* Header */}
       <div className="section-header" style={{marginBottom:'20px', flexWrap:'wrap', gap:'12px'}}>
-        <div>
-          <h2>💰 Fatturazione Mensile</h2>
-          <p style={{color:'#666', fontSize:'14px', margin:'4px 0 0'}}>Riepilogo costi pulizie per appartamento</p>
-        </div>
+        <div><h2>💰 Fatturazione Mensile</h2><p style={{color:'#666', fontSize:'14px', margin:'4px 0 0'}}>Riepilogo costi pulizie per appartamento</p></div>
         <div style={{display:'flex', gap:'10px', alignItems:'center', flexWrap:'wrap'}}>
-          <select className="edit-input" style={{width:'140px'}} value={meseSelezionato} onChange={e=>setMeseSelezionato(parseInt(e.target.value))}>
-            {mesi.map((m,i)=><option key={i} value={i}>{m}</option>)}
-          </select>
-          <select className="edit-input" style={{width:'90px'}} value={annoSelezionato} onChange={e=>setAnnoSelezionato(parseInt(e.target.value))}>
-            {anni.map(a=><option key={a} value={a}>{a}</option>)}
-          </select>
+          <select className="edit-input" style={{width:'140px'}} value={meseSelezionato} onChange={e=>setMeseSelezionato(parseInt(e.target.value))}>{mesi.map((m,i)=><option key={i} value={i}>{m}</option>)}</select>
+          <select className="edit-input" style={{width:'90px'}} value={annoSelezionato} onChange={e=>setAnnoSelezionato(parseInt(e.target.value))}>{anni.map(a=><option key={a} value={a}>{a}</option>)}</select>
           <button className="btn-sync" onClick={esportaExcel} disabled={recapPerAppartamento.length===0}>📥 Scarica Excel</button>
         </div>
       </div>
-
-      {/* Riepilogo totali */}
       {recapPerAppartamento.length > 0 && (
-        <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:'12px', marginBottom:'24px'}}>
+        <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(150px, 1fr))', gap:'12px', marginBottom:'24px'}}>
           {[
             {label:'Pulizie totali', value: totalePulizieNum, icon:'🧹', color:'#2d5a3d'},
             {label:'Costo pulizie', value: fmtEuro(totalePulizie), icon:'💶', color:'#1d4ed8'},
             {label:'Costo biancheria', value: fmtEuro(totaleBiancheria), icon:'🛏', color:'#7c3aed'},
+            {label:'Extra/Sconti', value: fmtEuro(totaleExtra), icon: totaleExtra >= 0 ? '➕' : '➖', color: totaleExtra >= 0 ? '#059669' : '#dc2626'},
             {label:'Totale fatturabile', value: fmtEuro(totaleGenerale), icon:'💰', color:'#b45309'},
           ].map((item,i)=>(
             <div key={i} style={{background:'white', border:'1px solid #e5e7eb', borderRadius:'12px', padding:'16px', textAlign:'center'}}>
               <div style={{fontSize:'24px'}}>{item.icon}</div>
-              <div style={{fontSize:'22px', fontWeight:'bold', color:item.color, margin:'4px 0'}}>{item.value}</div>
+              <div style={{fontSize:'20px', fontWeight:'bold', color:item.color, margin:'4px 0'}}>{item.value}</div>
               <div style={{fontSize:'12px', color:'#666'}}>{item.label}</div>
             </div>
           ))}
         </div>
       )}
-
-      {/* Tabella per appartamento */}
       {recapPerAppartamento.length === 0 ? (
-        <div className="sync-panel" style={{textAlign:'center', color:'#888', padding:'40px'}}>
-          Nessuna pulizia registrata per {mesi[meseSelezionato]} {annoSelezionato}
-        </div>
+        <div className="sync-panel" style={{textAlign:'center', color:'#888', padding:'40px'}}>Nessuna pulizia registrata per {mesi[meseSelezionato]} {annoSelezionato}</div>
       ) : (
         recapPerAppartamento.map(r => (
           <div key={r.app.id} className="sync-panel" style={{marginBottom:'16px'}}>
-            {/* Header appartamento */}
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'12px'}}>
               <div>
                 <strong style={{fontSize:'16px'}}>{r.app.nome}</strong>
                 {r.app.owner && <span style={{marginLeft:'8px', fontSize:'12px', color:'#888'}}>Owner: {r.app.owner}</span>}
                 {r.app.gestore && <span style={{marginLeft:'8px', fontSize:'12px', color:'#888'}}>Gestore: {r.app.gestore}</span>}
-                <div style={{marginTop:'4px', fontSize:'12px', color:'#666'}}>
-                  {r.dipendentiUsati.length > 0 && <span>👤 {r.dipendentiUsati.join(', ')}</span>}
-                </div>
+                <div style={{marginTop:'4px', fontSize:'12px', color:'#666'}}>{r.dipendentiUsati.length > 0 && <span>👤 {r.dipendentiUsati.join(', ')}</span>}</div>
               </div>
               <div style={{textAlign:'right'}}>
                 <div style={{fontSize:'22px', fontWeight:'bold', color:'#2d5a3d'}}>{fmtEuro(r.totale)}</div>
                 <div style={{fontSize:'12px', color:'#888'}}>{r.numPulizie} pulizie</div>
               </div>
             </div>
-
-            {/* Tabella pulizie */}
             <div className="table-container">
               <table>
                 <thead>
-                  <tr>
-                    <th>Data pulizia</th>
-                    <th>Check-in</th>
-                    <th>Ospiti</th>
-                    <th>Dipendente</th>
-                    <th>Stato</th>
-                    <th>Costo pulizia</th>
-                    <th>Biancheria</th>
-                    <th>Totale</th>
-                  </tr>
+                  <tr><th>Data pulizia</th><th>Check-in</th><th>Ospiti</th><th>Dipendente</th><th>Stato</th><th>Note</th><th>Costo pulizia</th><th>Biancheria</th><th>Totale</th></tr>
                 </thead>
                 <tbody>
                   {r.pulizie.map((p,i) => {
                     const dip = dipendenti.find(d => String(d.id) === String(p.dipendente_id));
+                    const numOspiti = parseInt(p.num_ospiti) || 1;
+                    const biancheriaRiga = r.biancheriaUnitaria * numOspiti;
                     return (
                       <tr key={i}>
                         <td>{p.check_out ? fmtData(p.check_out) : '—'}</td>
                         <td style={{fontSize:'12px',color:'#555'}}>{p.check_in ? fmtData(p.check_in) : '—'}</td>
-                        <td style={{textAlign:'center'}}><strong>{p.num_ospiti || '—'}</strong></td>
+                        <td style={{textAlign:'center'}}><strong>{numOspiti}</strong></td>
                         <td>{dip?.nome_cognome || <span style={{color:'#aaa'}}>Non assegnato</span>}</td>
-                        <td>
-                          <span style={{
-                            fontSize:'11px', padding:'2px 8px', borderRadius:'12px',
-                            background: p.stato_pulizia==='completata'?'#dcfce7':p.stato_pulizia==='posticipata'?'#fef3c7':'#f3f4f6',
-                            color: p.stato_pulizia==='completata'?'#166534':p.stato_pulizia==='posticipata'?'#92400e':'#374151'
-                          }}>
-                            {p.stato_pulizia==='completata'?'✅ Completata':p.stato_pulizia==='posticipata'?'⏭ Posticipata':'🔲 Da fare'}
-                          </span>
-                        </td>
+                        <td><span style={{fontSize:'11px', padding:'2px 8px', borderRadius:'12px', background: p.stato_pulizia==='completata'?'#dcfce7':p.stato_pulizia==='posticipata'?'#fef3c7':'#f3f4f6', color: p.stato_pulizia==='completata'?'#166534':p.stato_pulizia==='posticipata'?'#92400e':'#374151'}}>{p.stato_pulizia==='completata'?'✅ Completata':p.stato_pulizia==='posticipata'?'⏭ Posticipata':'🔲 Da fare'}</span></td>
+                        <td style={{fontSize:'12px', color:'#555', maxWidth:'160px'}}>{p.note ? <span title={p.note}>{p.note.length > 40 ? p.note.slice(0,40)+'…' : p.note}</span> : <span style={{color:'#ccc'}}>—</span>}</td>
                         <td>{fmtEuro(r.prezzoUnitario)}</td>
-                        <td>{fmtEuro(r.biancheriaUnit)}</td>
-                        <td><strong>{fmtEuro(r.prezzoUnitario + r.biancheriaUnit)}</strong></td>
+                        <td>{r.biancheriaUnitaria > 0 ? <span title={`€${r.biancheriaUnitaria.toFixed(2)} × ${numOspiti} ospiti`}>{fmtEuro(biancheriaRiga)}</span> : <span style={{color:'#aaa'}}>—</span>}</td>
+                        <td><strong>{fmtEuro(r.prezzoUnitario + biancheriaRiga)}</strong></td>
                       </tr>
                     );
                   })}
+                  {/* RIGA EXTRA */}
+                  <tr style={{background:'#fafafa', borderTop:'2px dashed #e5e7eb'}}>
+                    <td colSpan={5} style={{paddingTop:'10px', paddingBottom:'10px'}}>
+                      <span style={{fontSize:'12px', color:'#6b7280', fontStyle:'italic'}}>Extra / Sconto (positivo = supplemento, negativo = sconto)</span>
+                    </td>
+                    <td style={{fontSize:'12px', color:'#6b7280'}}>—</td>
+                    <td></td><td></td>
+                    <td>
+                      <div style={{display:'flex', alignItems:'center', gap:'4px'}}>
+                        <span style={{fontSize:'13px', color:'#374151'}}>€</span>
+                        <input type="number" step="0.01" className="edit-input" style={{width:'90px', textAlign:'right', color: (parseFloat(extra[r.app.id]||0)) < 0 ? '#dc2626' : (parseFloat(extra[r.app.id]||0)) > 0 ? '#059669' : '#374151', fontWeight: extra[r.app.id] ? 'bold' : 'normal'}}
+                          placeholder="0.00" value={extra[r.app.id] || ''} onChange={e => setExtra(prev => ({ ...prev, [r.app.id]: e.target.value }))} />
+                      </div>
+                    </td>
+                  </tr>
                 </tbody>
                 <tfoot>
                   <tr style={{background:'#f9fafb', fontWeight:'bold'}}>
-                    <td colSpan={5} style={{textAlign:'right', paddingRight:'12px'}}>Subtotale {r.app.nome}:</td>
+                    <td colSpan={6} style={{textAlign:'right', paddingRight:'12px'}}>Subtotale {r.app.nome}:</td>
                     <td>{fmtEuro(r.costoImponibile)}</td>
                     <td>{fmtEuro(r.costoImponibileBiancheria)}</td>
-                    <td style={{color:'#2d5a3d'}}>{fmtEuro(r.totale)}</td>
+                    <td style={{color:'#2d5a3d'}}>
+                      {fmtEuro(r.totale)}
+                      {r.extraApp !== 0 && <span style={{fontSize:'11px', color: r.extraApp > 0 ? '#059669' : '#dc2626', marginLeft:'4px'}}>({r.extraApp > 0 ? '+' : ''}{fmtEuro(r.extraApp)})</span>}
+                    </td>
                   </tr>
                 </tfoot>
               </table>
@@ -1574,17 +1344,15 @@ function FatturazioneAppartamenti({ prenotazioni, appartamenti, dipendenti }) {
           </div>
         ))
       )}
-
-      {/* Totale generale */}
       {recapPerAppartamento.length > 0 && (
         <div style={{background:'#2d5a3d', color:'white', borderRadius:'12px', padding:'20px', display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:'8px'}}>
           <div>
             <div style={{fontSize:'18px', fontWeight:'bold'}}>Totale Generale — {mesi[meseSelezionato]} {annoSelezionato}</div>
-            <div style={{fontSize:'13px', opacity:0.8}}>{totalePulizieNum} pulizie · {recapPerAppartamento.length} appartamenti</div>
+            <div style={{fontSize:'13px', opacity:0.8}}>{totalePulizieNum} pulizie · {recapPerAppartamento.length} appartamenti{totaleExtra !== 0 && ` · Extra/Sconti: ${totaleExtra > 0 ? '+' : ''}${fmtEuro(totaleExtra)}`}</div>
           </div>
           <div style={{textAlign:'right'}}>
             <div style={{fontSize:'28px', fontWeight:'bold'}}>{fmtEuro(totaleGenerale)}</div>
-            <div style={{fontSize:'12px', opacity:0.8}}>Pulizie {fmtEuro(totalePulizie)} + Biancheria {fmtEuro(totaleBiancheria)}</div>
+            <div style={{fontSize:'12px', opacity:0.8}}>Pulizie {fmtEuro(totalePulizie)} + Biancheria {fmtEuro(totaleBiancheria)}{totaleExtra !== 0 && ` + Extra ${fmtEuro(totaleExtra)}`}</div>
           </div>
         </div>
       )}
