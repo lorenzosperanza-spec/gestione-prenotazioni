@@ -1152,20 +1152,46 @@ function ImportItalianWay({ appartamenti, onImport }) {
 /* ---------- REPORT ORE DIPENDENTI ---------- */
 function ReportOreDipendenti({ prenotazioni, dipendenti, appartamenti }) {
   const oggi = new Date(); oggi.setHours(0,0,0,0);
-  
-  // Calcola inizio/fine settimana corrente (lunedì-domenica)
-  const lunedi = new Date(oggi);
-  lunedi.setDate(oggi.getDate() - ((oggi.getDay() + 6) % 7));
-  const domenica = new Date(lunedi);
-  domenica.setDate(lunedi.getDate() + 6);
+
+  // Calcola lunedì e domenica della settimana corrente come default
+  const lunediDefault = new Date(oggi);
+  lunediDefault.setDate(oggi.getDate() - ((oggi.getDay() + 6) % 7));
+  const domenicaDefault = new Date(lunediDefault);
+  domenicaDefault.setDate(lunediDefault.getDate() + 6);
 
   const toDateStr = (d) => typeof d === 'string' ? d.slice(0,10) : d.toISOString().slice(0,10);
-  const fmtData = (d) => new Date(d).toLocaleDateString('it-IT', {day:'numeric', month:'short'});
+  const fmtData = (d) => new Date(d + 'T00:00:00').toLocaleDateString('it-IT', {day:'numeric', month:'short', year:'numeric'});
 
-  // Filtra pulizie della settimana corrente (check_out in range)
+  const [dataInizio, setDataInizio] = useState(toDateStr(lunediDefault));
+  const [dataFine, setDataFine] = useState(toDateStr(domenicaDefault));
+
+  // Shortcut periodi
+  const setSettimanaCorrente = () => {
+    const l = new Date(oggi); l.setDate(oggi.getDate() - ((oggi.getDay() + 6) % 7));
+    const d = new Date(l); d.setDate(l.getDate() + 6);
+    setDataInizio(toDateStr(l)); setDataFine(toDateStr(d));
+  };
+  const setSettimanaScorsa = () => {
+    const l = new Date(oggi); l.setDate(oggi.getDate() - ((oggi.getDay() + 6) % 7) - 7);
+    const d = new Date(l); d.setDate(l.getDate() + 6);
+    setDataInizio(toDateStr(l)); setDataFine(toDateStr(d));
+  };
+  const setMeseCorrente = () => {
+    const inizio = new Date(oggi.getFullYear(), oggi.getMonth(), 1);
+    const fine = new Date(oggi.getFullYear(), oggi.getMonth() + 1, 0);
+    setDataInizio(toDateStr(inizio)); setDataFine(toDateStr(fine));
+  };
+  const setMeseScorso = () => {
+    const inizio = new Date(oggi.getFullYear(), oggi.getMonth() - 1, 1);
+    const fine = new Date(oggi.getFullYear(), oggi.getMonth(), 0);
+    setDataInizio(toDateStr(inizio)); setDataFine(toDateStr(fine));
+  };
+
+  // Filtra pulizie nel range selezionato (check_out in range)
   const pulizieSettimana = prenotazioni.filter(p => {
+    if (!p.check_out || p.stato === 'cancellata') return false;
     const co = toDateStr(p.check_out);
-    return co >= toDateStr(lunedi) && co <= toDateStr(domenica) && p.stato !== 'cancellata';
+    return co >= dataInizio && co <= dataFine;
   });
 
   // Per ogni dipendente calcola le ore
@@ -1212,7 +1238,7 @@ function ReportOreDipendenti({ prenotazioni, dipendenti, appartamenti }) {
         'Stato Pulizia': `${r.ore}h ${r.minuti}min`
       });
     }
-    exportExcel(righe, 'report_ore_dipendenti',
+    exportExcel(righe, `report_ore_${dataInizio}_${dataFine}`,
       ['Dipendente','Appartamento','Check-out','Min Pulizia','Min Logistica','Min Totali','Stato Pulizia'],
       ['Dipendente','Appartamento','Check-out','Min Pulizia','Min Logistica','Min Totali','Stato Pulizia']
     );
@@ -1220,15 +1246,40 @@ function ReportOreDipendenti({ prenotazioni, dipendenti, appartamenti }) {
 
   return (
     <div style={{padding:'24px'}}>
-      <div className="section-header" style={{marginBottom:'20px'}}>
-        <div>
-          <h2>📊 Report Ore Dipendenti</h2>
-          <p style={{color:'#666', fontSize:'14px', margin:'4px 0 0'}}>
-            Settimana: <strong>{fmtData(lunedi)} – {fmtData(domenica)}</strong>
-            {' '}· Totale ore stimate: <strong>{Math.floor(totaleMinuti/60)}h {totaleMinuti%60}min</strong>
-          </p>
+      <div style={{marginBottom:'20px'}}>
+        <div className="section-header" style={{marginBottom:'12px'}}>
+          <div>
+            <h2>📊 Report Ore Dipendenti</h2>
+            <p style={{color:'#666', fontSize:'14px', margin:'4px 0 0'}}>
+              Totale ore stimate: <strong>{Math.floor(totaleMinuti/60)}h {totaleMinuti%60}min</strong>
+              {' '}· {pulizieSettimana.length} pulizie nel periodo
+            </p>
+          </div>
+          <button className="btn-sync" onClick={esportaReport} disabled={reportDipendenti.every(r=>r.numPulizie===0)}>📥 Scarica Excel</button>
         </div>
-        <button className="btn-sync" onClick={esportaReport}>📥 Scarica Excel</button>
+
+        {/* Selettore periodo */}
+        <div style={{background:'white', border:'1px solid #e5e7eb', borderRadius:'12px', padding:'16px', display:'flex', gap:'12px', alignItems:'center', flexWrap:'wrap'}}>
+          <div style={{display:'flex', alignItems:'center', gap:'8px'}}>
+            <label style={{fontSize:'13px', fontWeight:'600', color:'#374151'}}>Dal:</label>
+            <input type="date" className="edit-input" style={{width:'150px'}} value={dataInizio} onChange={e=>setDataInizio(e.target.value)} />
+          </div>
+          <div style={{display:'flex', alignItems:'center', gap:'8px'}}>
+            <label style={{fontSize:'13px', fontWeight:'600', color:'#374151'}}>Al:</label>
+            <input type="date" className="edit-input" style={{width:'150px'}} value={dataFine} onChange={e=>setDataFine(e.target.value)} />
+          </div>
+          <div style={{display:'flex', gap:'6px', flexWrap:'wrap'}}>
+            <button className="btn-pulizia btn-completa" style={{fontSize:'12px', padding:'6px 10px'}} onClick={setSettimanaCorrente}>Settimana corrente</button>
+            <button className="btn-pulizia btn-annulla-stato" style={{fontSize:'12px', padding:'6px 10px'}} onClick={setSettimanaScorsa}>Settimana scorsa</button>
+            <button className="btn-pulizia btn-completa" style={{fontSize:'12px', padding:'6px 10px'}} onClick={setMeseCorrente}>Mese corrente</button>
+            <button className="btn-pulizia btn-annulla-stato" style={{fontSize:'12px', padding:'6px 10px'}} onClick={setMeseScorso}>Mese scorso</button>
+          </div>
+          {dataInizio && dataFine && (
+            <span style={{fontSize:'12px', color:'#888', marginLeft:'4px'}}>
+              📅 {fmtData(dataInizio)} → {fmtData(dataFine)}
+            </span>
+          )}
+        </div>
       </div>
 
       {reportDipendenti.map(r => (
@@ -1298,7 +1349,7 @@ function ReportOreDipendenti({ prenotazioni, dipendenti, appartamenti }) {
 
       {reportDipendenti.every(r => r.numPulizie === 0) && (
         <div className="sync-panel" style={{textAlign:'center', color:'#888', padding:'40px'}}>
-          Nessuna pulizia assegnata questa settimana ({fmtData(lunedi)} – {fmtData(domenica)})
+          Nessuna pulizia assegnata nel periodo {fmtData(dataInizio)} – {fmtData(dataFine)}
         </div>
       )}
     </div>
