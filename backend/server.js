@@ -818,11 +818,18 @@ const fetchSmartPMSReservations = async () => {
     console.log(`SmartPMS pagina ${pagina}: ${items.length} items`);
     for (const item of items) tuttePrenotazioni.push(item);
     // Paginazione
-    const pagination = data.data?.pagination || data.meta || {};
-    const totalPages = pagination.lastPage || pagination.last_page || pagination.total_pages || 1;
-    const totalItems = pagination.total || pagination.count || 0;
-    console.log(`SmartPMS paginazione: pagina ${pagina}/${totalPages}, totale items: ${totalItems}`);
-    if (pagina >= totalPages || items.length < 100) break;
+    // Cerca la paginazione in tutti i posti possibili
+    const pagination = data.data?.pagination || data.data?.meta || data.meta || {};
+    const dataObj = data.data || {};
+    const totalPages = pagination.lastPage || pagination.last_page || pagination.total_pages || pagination.pages ||
+                       dataObj.lastPage || dataObj.last_page || dataObj.total_pages || 1;
+    const totalItems = pagination.total || pagination.count || dataObj.total || dataObj.count || 0;
+    const perPage = pagination.perPage || pagination.per_page || dataObj.perPage || 100;
+    console.log(`SmartPMS paginazione: pagina ${pagina}/${totalPages}, items questa pagina: ${items.length}, totale: ${totalItems}, perPage: ${perPage}`);
+    console.log(`SmartPMS data.data keys: ${Object.keys(dataObj).join(',')}`);
+    // Continua se ci sono altre pagine O se gli items sono pari al perPage (potrebbe esserci un'altra pagina)
+    if (pagina >= totalPages && items.length < perPage) break;
+    if (items.length === 0) break;
     pagina++;
   }
   console.log(`SmartPMS totale prenotazioni: ${tuttePrenotazioni.length}`);
