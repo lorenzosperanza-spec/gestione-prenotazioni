@@ -9,6 +9,22 @@ const setToken = (t) => localStorage.setItem('cg_token', t);
 const removeToken = () => localStorage.removeItem('cg_token');
 const authHeaders = () => ({ 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` });
 
+// ============ EXPORT EXCEL ============
+const exportExcel = (dati, nomeFile, intestazioni, campi) => {
+  try {
+    if (typeof XLSX === 'undefined') { alert('Libreria XLSX non disponibile'); return; }
+    const righe = dati.map(r => {
+      const riga = {};
+      intestazioni.forEach((h, i) => { riga[h] = r[campi[i]] ?? ''; });
+      return riga;
+    });
+    const ws = XLSX.utils.json_to_sheet(righe);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Dati');
+    XLSX.writeFile(wb, `${nomeFile}_${new Date().toISOString().slice(0,10)}.xlsx`);
+  } catch(e) { alert('Errore export: ' + e.message); }
+};
+
 // ============ LOGIN PAGE ============
 function LoginPage({ onLogin }) {
   const [email, setEmail] = useState('')
@@ -129,6 +145,7 @@ function App() {
           <button className={vista === 'nuova' ? 'active' : ''} onClick={() => setVista('nuova')}>+ Nuova</button>
           <button className={vista === 'nuovo_app' ? 'active' : ''} onClick={() => setVista('nuovo_app')}>+ Appartamento</button>
           <button className={vista === 'import' ? 'active' : ''} onClick={() => setVista('import')}>⬆ Import</button>
+          <button className={vista === 'report' ? 'active' : ''} onClick={() => setVista('report')}>📊 Report Ore</button>
         </nav>
         <div className="header-user">
           <span className="user-badge">👤 {utente.nome || utente.email.split('@')[0]}</span>
@@ -143,6 +160,7 @@ function App() {
         {vista === 'nuova' && <NuovaPrenotazione appartamenti={appartamenti} onSave={() => { caricaDati(); setVista('prenotazioni') }} />}
         {vista === 'nuovo_app' && <NuovoAppartamento onSave={() => { caricaDati(); setVista('appartamenti') }} />}
         {vista === 'import' && <ImportItalianWay appartamenti={appartamenti} onImport={() => { caricaDati(); setVista('prenotazioni') }} />}
+        {vista === 'report' && <ReportOreDipendenti prenotazioni={prenotazioni} dipendenti={dipendenti} appartamenti={appartamenti} />}
       </main>
     </div>
   )
@@ -283,7 +301,24 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
   return (
     <div className="dashboard">
       <div className="dash-header">
-        <h2>{oggi.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h2>
+        <div style={{display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap'}}>
+          <h2>{oggi.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h2>
+          <button className="btn-sync" style={{fontSize:'13px'}} onClick={() => {
+            const dati = [...pulizieOggi, ...pulizieFuture].map(p => ({
+              appartamento: p.appartamento_nome || '',
+              checkout: p.check_out ? p.check_out.slice(0,10) : '',
+              prossimo_checkin: p.prossima?.check_in ? p.prossima.check_in.slice(0,10) : '',
+              ospiti: p.prossima?.num_ospiti || p.num_ospiti || '',
+              dipendente: p.dipendente_nome || '',
+              stato: p.stato_pulizia || 'da_fare',
+              note: p.note || ''
+            }));
+            exportExcel(dati, 'dashboard_pulizie',
+              ['Appartamento','Check-out','Prossimo Check-in','Ospiti','Dipendente','Stato','Note'],
+              ['appartamento','checkout','prossimo_checkin','ospiti','dipendente','stato','note']
+            );
+          }}>📥 Scarica Excel</button>
+        </div>
         <div className="dash-controls">
           <div className="modalita-toggle">
             <button className={modalita === 'panoramica' ? 'active' : ''} onClick={() => setModalita('panoramica')}>📅 Panoramica</button>
@@ -434,7 +469,13 @@ function ListaAppartamenti({ appartamenti, onUpdate }) {
 
   return (
     <div className="lista-appartamenti">
-      <h2>Appartamenti</h2>
+      <div className="section-header">
+        <h2>Appartamenti</h2>
+        <button className="btn-sync" onClick={() => exportExcel(appartamentiFiltrati, 'appartamenti',
+          ['Nome','Via','Owner','Gestore','Prezzo €','Biancheria €','Logistica min','Pulizia min','Letti Max'],
+          ['nome','via','owner','gestore','prezzo','biancheria','logistica','pulizia','letti_max']
+        )}>📥 Scarica Excel</button>
+      </div>
       <input type="text" placeholder="Cerca per nome, via, owner o gestore..." value={filtro} onChange={e => setFiltro(e.target.value)} className="search-input" />
       <div className="table-container">
         <table>
@@ -489,7 +530,14 @@ function ListaPrenotazioni({ prenotazioni, appartamenti, onUpdate }) {
 
   return (
     <div className="lista-prenotazioni">
-      <div className="section-header"><h2>Prenotazioni</h2><span className="count-badge">{prenotazioniFiltrate.length} / {prenotazioni.length}</span></div>
+      <div className="section-header">
+        <h2>Prenotazioni</h2>
+        <span className="count-badge">{prenotazioniFiltrate.length} / {prenotazioni.length}</span>
+        <button className="btn-sync" onClick={() => exportExcel(prenotazioniFiltrate, 'prenotazioni',
+          ['Appartamento','Check-in','Check-out','Ospiti','Note','Stato'],
+          ['appartamento_nome','check_in','check_out','num_ospiti','note','stato']
+        )}>📥 Scarica Excel</button>
+      </div>
       <div className="filtri-bar">
         <input type="text" placeholder="🔍 Cerca appartamento..." value={filtroAppartamento} onChange={e => setFiltroAppartamento(e.target.value)} className="search-input filtro-input" />
         <select value={filtroStato} onChange={e => setFiltroStato(e.target.value)} className="filtro-select"><option value="">Tutti gli stati</option><option value="confermata">Confermata</option><option value="in_attesa">In attesa</option><option value="cancellata">Cancellata</option></select>
@@ -1096,6 +1144,163 @@ function ImportItalianWay({ appartamenti, onImport }) {
       )}
     </div>
   )
+}
+
+
+/* ---------- REPORT ORE DIPENDENTI ---------- */
+function ReportOreDipendenti({ prenotazioni, dipendenti, appartamenti }) {
+  const oggi = new Date(); oggi.setHours(0,0,0,0);
+  
+  // Calcola inizio/fine settimana corrente (lunedì-domenica)
+  const lunedi = new Date(oggi);
+  lunedi.setDate(oggi.getDate() - ((oggi.getDay() + 6) % 7));
+  const domenica = new Date(lunedi);
+  domenica.setDate(lunedi.getDate() + 6);
+
+  const toDateStr = (d) => typeof d === 'string' ? d.slice(0,10) : d.toISOString().slice(0,10);
+  const fmtData = (d) => new Date(d).toLocaleDateString('it-IT', {day:'numeric', month:'short'});
+
+  // Filtra pulizie della settimana corrente (check_out in range)
+  const pulizieSettimana = prenotazioni.filter(p => {
+    const co = toDateStr(p.check_out);
+    return co >= toDateStr(lunedi) && co <= toDateStr(domenica) && p.stato !== 'cancellata';
+  });
+
+  // Per ogni dipendente calcola le ore
+  const reportDipendenti = dipendenti.map(dip => {
+    const pulizieDip = pulizieSettimana.filter(p => String(p.dipendente_id) === String(dip.id));
+    
+    let minTotali = 0;
+    const dettaglio = pulizieDip.map(p => {
+      const app = appartamenti.find(a => String(a.id) === String(p.appartamento_id));
+      const minPulizia = parseInt(app?.pulizia || 0);
+      const minLogistica = parseInt(app?.logistica || 0);
+      const minTot = minPulizia + minLogistica;
+      minTotali += minTot;
+      return { appartamento: p.appartamento_nome || app?.nome || '', checkout: toDateStr(p.check_out), minPulizia, minLogistica, minTot, statoPulizia: p.stato_pulizia || 'da_fare' };
+    });
+
+    return { dipendente: dip, minTotali, ore: Math.floor(minTotali/60), minuti: minTotali%60, numPulizie: pulizieDip.length, dettaglio };
+  }).filter(r => r.numPulizie > 0 || true); // mostra tutti
+
+  const totaleMinuti = reportDipendenti.reduce((acc, r) => acc + r.minTotali, 0);
+
+  const esportaReport = () => {
+    const righe = [];
+    for (const r of reportDipendenti) {
+      if (r.numPulizie === 0) continue;
+      for (const d of r.dettaglio) {
+        righe.push({
+          Dipendente: r.dipendente.nome_cognome,
+          Appartamento: d.appartamento,
+          'Check-out': d.checkout,
+          'Min Pulizia': d.minPulizia,
+          'Min Logistica': d.minLogistica,
+          'Min Totali': d.minTot,
+          'Stato Pulizia': d.statoPulizia
+        });
+      }
+      righe.push({
+        Dipendente: `TOTALE ${r.dipendente.nome_cognome}`,
+        Appartamento: `${r.numPulizie} pulizie`,
+        'Check-out': '',
+        'Min Pulizia': '',
+        'Min Logistica': '',
+        'Min Totali': r.minTotali,
+        'Stato Pulizia': `${r.ore}h ${r.minuti}min`
+      });
+    }
+    exportExcel(righe, 'report_ore_dipendenti',
+      ['Dipendente','Appartamento','Check-out','Min Pulizia','Min Logistica','Min Totali','Stato Pulizia'],
+      ['Dipendente','Appartamento','Check-out','Min Pulizia','Min Logistica','Min Totali','Stato Pulizia']
+    );
+  };
+
+  return (
+    <div style={{padding:'24px'}}>
+      <div className="section-header" style={{marginBottom:'20px'}}>
+        <div>
+          <h2>📊 Report Ore Dipendenti</h2>
+          <p style={{color:'#666', fontSize:'14px', margin:'4px 0 0'}}>
+            Settimana: <strong>{fmtData(lunedi)} – {fmtData(domenica)}</strong>
+            {' '}· Totale ore stimate: <strong>{Math.floor(totaleMinuti/60)}h {totaleMinuti%60}min</strong>
+          </p>
+        </div>
+        <button className="btn-sync" onClick={esportaReport}>📥 Scarica Excel</button>
+      </div>
+
+      {reportDipendenti.map(r => (
+        <div key={r.dipendente.id} className="sync-panel" style={{marginBottom:'16px'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: r.numPulizie > 0 ? '12px' : '0'}}>
+            <div>
+              <strong style={{fontSize:'16px'}}>{r.dipendente.nome_cognome}</strong>
+              {r.dipendente.patente && <span style={{marginLeft:'8px', fontSize:'12px'}}>🚗</span>}
+              <span style={{marginLeft:'12px', color:'#666', fontSize:'13px'}}>
+                {r.numPulizie > 0 ? `${r.numPulizie} pulizie · ` : 'Nessuna pulizia assegnata · '}
+                <strong style={{color: r.numPulizie > 0 ? '#2d5a3d' : '#999'}}>
+                  {r.ore}h {r.minuti}min
+                </strong>
+              </span>
+            </div>
+            <div style={{textAlign:'right'}}>
+              <div style={{fontSize:'20px', fontWeight:'bold', color:'#2d5a3d'}}>{r.ore}h {r.minuti}min</div>
+              <div style={{fontSize:'11px', color:'#888'}}>{r.minTotali} min totali</div>
+            </div>
+          </div>
+
+          {r.numPulizie > 0 && (
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Appartamento</th>
+                    <th>Check-out</th>
+                    <th>Pulizia</th>
+                    <th>Logistica</th>
+                    <th>Totale</th>
+                    <th>Stato</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {r.dettaglio.map((d, i) => (
+                    <tr key={i}>
+                      <td><strong>{d.appartamento}</strong></td>
+                      <td>{fmtData(d.checkout)}</td>
+                      <td>{d.minPulizia > 0 ? `${d.minPulizia} min` : <span style={{color:'#aaa'}}>—</span>}</td>
+                      <td>{d.minLogistica > 0 ? `${d.minLogistica} min` : <span style={{color:'#aaa'}}>—</span>}</td>
+                      <td><strong>{d.minTot} min</strong></td>
+                      <td>
+                        <span style={{
+                          fontSize:'11px', padding:'2px 8px', borderRadius:'12px',
+                          background: d.statoPulizia === 'completata' ? '#dcfce7' : d.statoPulizia === 'posticipata' ? '#fef3c7' : '#f3f4f6',
+                          color: d.statoPulizia === 'completata' ? '#166534' : d.statoPulizia === 'posticipata' ? '#92400e' : '#374151'
+                        }}>
+                          {d.statoPulizia === 'completata' ? '✅ Completata' : d.statoPulizia === 'posticipata' ? '⏭ Posticipata' : '🔲 Da fare'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{background:'#f9fafb', fontWeight:'bold'}}>
+                    <td colSpan={4} style={{textAlign:'right', paddingRight:'12px'}}>Totale settimana:</td>
+                    <td><strong style={{color:'#2d5a3d'}}>{r.minTotali} min ({r.ore}h {r.minuti}min)</strong></td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      ))}
+
+      {reportDipendenti.every(r => r.numPulizie === 0) && (
+        <div className="sync-panel" style={{textAlign:'center', color:'#888', padding:'40px'}}>
+          Nessuna pulizia assegnata questa settimana ({fmtData(lunedi)} – {fmtData(domenica)})
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default App
