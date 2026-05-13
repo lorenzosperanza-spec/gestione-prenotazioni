@@ -773,9 +773,9 @@ const loginSmartPMS = async () => {
   }
   const email = process.env.SMARTPMS_EMAIL, password = process.env.SMARTPMS_PASSWORD;
   if (!email || !password) throw new Error('SMARTPMS_EMAIL o SMARTPMS_PASSWORD non configurati');
-  const res = await fetch('https://api.ciaobooking.com/api/public/login', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-    body: JSON.stringify({ email, password })
+  const res = await fetch('https://pms-api.smartness.com/api/3.0/auth/session', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Platform': 'frontend', 'The-Timezone-Iana': 'Europe/Rome' },
+    body: JSON.stringify({ email, password, isRemember: false })
   });
   const bodyText = await res.text();
   if (!res.ok) throw new Error(`Login SmartPMS fallito (${res.status}): ${bodyText}`);
@@ -794,69 +794,38 @@ const getSmartPMSHeaders = async () => {
   return { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json', 'Content-Type': 'application/json', 'X-Platform': 'frontend', 'The-Timezone-Iana': 'Europe/Rome' };
 };
 
-// Fetch properties per ottenere i property_id
-const fetchSmartPMSProperties = async (headers) => {
-  try {
-    const res = await fetch('https://api.ciaobooking.com/api/public/properties', { headers });
-    if (!res.ok) { console.log('Properties non disponibile:', res.status); return []; }
-    const data = await res.json();
-    const props = data.data || data.properties || (Array.isArray(data) ? data : []);
-    console.log(`SmartPMS properties: ${JSON.stringify(props.slice(0,3).map(p=>({id:p.id,name:p.name})))}`);
-    return Array.isArray(props) ? props : [];
-  } catch(e) { console.error('Errore properties:', e.message); return []; }
-};
-
 const fetchSmartPMSReservations = async () => {
   const headers = await getSmartPMSHeaders();
   const oggi = new Date(), da = new Date(oggi), a = new Date(oggi);
   da.setDate(da.getDate() - 7); a.setDate(a.getDate() + 180);
-  const daStr = da.toISOString().slice(0,10), aStr = a.toISOString().slice(0,10);
-
-  // Prima recupera le properties
-  const properties = await fetchSmartPMSProperties(headers);
-  let tuttePrenotazioni = [];
-
-  if (properties.length === 0) {
-    // Prova senza property_id (tutte le strutture)
-    console.log('SmartPMS: nessuna property trovata, provo senza filtro');
-    let offset = 0, limit = 100;
-    while (true) {
-      const url = `https://api.ciaobooking.com/api/public/reservations?from=${daStr}&to=${aStr}&limit=${limit}&offset=${offset}`;
-      console.log(`SmartPMS fetch: ${url}`);
-      const res = await fetch(url, { headers });
-      if (res.status === 401) { smartpmsTokenCache = { token: null, expiresAt: null }; throw new Error('Token SmartPMS scaduto'); }
-      const rawText = await res.text();
-      console.log(`SmartPMS raw (primi 500): ${rawText.slice(0,500)}`);
-      if (!res.ok) throw new Error(`Errore SmartPMS: ${res.status} ${rawText.slice(0,200)}`);
-      const data = JSON.parse(rawText);
-      const items = data.data || data.reservations || (Array.isArray(data) ? data : []);
-      if (!Array.isArray(items) || items.length === 0) break;
-      console.log(`SmartPMS offset ${offset}: ${items.length} prenotazioni`);
-      tuttePrenotazioni.push(...items);
-      if (items.length < limit) break;
-      offset += limit;
+  let tuttePrenotazioni = [], pagina = 1;
+  while (true) {
+    const url = `https://pms-api.smartness.com/api/3.0/reservations/paginated?page=${pagina}&perPage=100&order=desc&sortBy=created_at&from=${da.toISOString().slice(0,10)}&to=${a.toISOString().slice(0,10)}`;
+    console.log(`SmartPMS fetch pagina ${pagina}`);
+    const res = await fetch(url, { headers });
+    if (res.status === 401) { smartpmsTokenCache = { token: null, expiresAt: null }; throw new Error('Token SmartPMS scaduto'); }
+    if (!res.ok) { const t = await res.text().catch(()=>''); throw new Error(`Errore SmartPMS: ${res.status} ${t.slice(0,200)}`); }
+    const data = await res.json();
+    // Struttura: data.data.collection = array prenotazioni
+    let items = [];
+    if (data.data && Array.isArray(data.data.collection)) {
+      items = data.data.collection;
+    } else if (Array.isArray(data.data)) {
+      items = data.data;
+    } else if (Array.isArray(data)) {
+      items = data;
     }
-  } else {
-    // Fetch per ogni property
-    for (const prop of properties) {
-      let offset = 0, limit = 100;
-      while (true) {
-        const url = `https://api.ciaobooking.com/api/public/reservations?property_id=${prop.id}&from=${daStr}&to=${aStr}&limit=${limit}&offset=${offset}`;
-        console.log(`SmartPMS fetch property ${prop.id} (${prop.name}): ${url}`);
-        const res = await fetch(url, { headers });
-        if (!res.ok) { console.log(`Errore property ${prop.id}: ${res.status}`); break; }
-        const data = await res.json();
-        const items = data.data || data.reservations || (Array.isArray(data) ? data : []);
-        if (!Array.isArray(items) || items.length === 0) break;
-        console.log(`SmartPMS property ${prop.id}: ${items.length} prenotazioni`);
-        tuttePrenotazioni.push(...items);
-        if (items.length < limit) break;
-        offset += limit;
-      }
-    }
+    console.log(`SmartPMS pagina ${pagina}: ${items.length} items`);
+    for (const item of items) tuttePrenotazioni.push(item);
+    // Paginazione
+    const pagination = data.data?.pagination || data.meta || {};
+    const totalPages = pagination.lastPage || pagination.last_page || pagination.total_pages || 1;
+    const totalItems = pagination.total || pagination.count || 0;
+    console.log(`SmartPMS paginazione: pagina ${pagina}/${totalPages}, totale items: ${totalItems}`);
+    if (pagina >= totalPages || items.length < 100) break;
+    pagina++;
   }
-
-  console.log(`SmartPMS totale: ${tuttePrenotazioni.length} prenotazioni`);
+  console.log(`SmartPMS totale prenotazioni: ${tuttePrenotazioni.length}`);
   return tuttePrenotazioni;
 };
 
