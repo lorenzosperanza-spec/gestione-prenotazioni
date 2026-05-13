@@ -805,9 +805,11 @@ const fetchSmartPMSReservations = async () => {
     const res = await fetch(url, { headers });
     if (res.status === 401) { smartpmsTokenCache = { token: null, expiresAt: null }; throw new Error('Token SmartPMS scaduto'); }
     if (!res.ok) { const t = await res.text().catch(()=>''); throw new Error(`Errore SmartPMS: ${res.status} ${t.slice(0,200)}`); }
-    const data = await res.json();
-    console.log(`SmartPMS risposta: keys=${Object.keys(data).join(',')} data_len=${Array.isArray(data.data)?data.data.length:'N/A'} meta=${JSON.stringify(data.meta||{})}`);
-    let items = data.data || (Array.isArray(data) ? data : []);
+    const rawText = await res.text();
+    console.log(`SmartPMS raw (primi 500 char): ${rawText.slice(0,500)}`);
+    const data = JSON.parse(rawText);
+    console.log(`SmartPMS risposta: keys=${Object.keys(data).join(',')} data_type=${typeof data.data} data_isArr=${Array.isArray(data.data)} meta_type=${typeof data.meta}`);
+    let items = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []);
     if (!Array.isArray(items)) items = [];
     console.log(`SmartPMS pagina ${pagina}: ${items.length} items`);
     for (const item of items) tuttePrenotazioni.push(item);
