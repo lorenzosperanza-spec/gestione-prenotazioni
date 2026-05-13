@@ -809,12 +809,21 @@ const fetchSmartPMSReservations = async () => {
     console.log(`SmartPMS raw (primi 500 char): ${rawText.slice(0,500)}`);
     const data = JSON.parse(rawText);
     console.log(`SmartPMS risposta: keys=${Object.keys(data).join(',')} data_type=${typeof data.data} data_isArr=${Array.isArray(data.data)} meta_type=${typeof data.meta}`);
-    let items = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []);
-    if (!Array.isArray(items)) items = [];
-    console.log(`SmartPMS pagina ${pagina}: ${items.length} items`);
+    // La struttura è: data.data.collection (array prenotazioni)
+    let items = [];
+    if (data.data && Array.isArray(data.data.collection)) {
+      items = data.data.collection;
+    } else if (Array.isArray(data.data)) {
+      items = data.data;
+    } else if (Array.isArray(data)) {
+      items = data;
+    }
+    console.log(`SmartPMS pagina ${pagina}: ${items.length} items (da data.data.collection)`);
     for (const item of items) tuttePrenotazioni.push(item);
-    const meta = data.meta || {};
-    const totalPages = meta.lastPage || meta.last_page || 1;
+    // Paginazione: meta può essere in data.meta o data.data.meta
+    const meta = data.meta || data.data?.meta || {};
+    console.log(`SmartPMS meta: ${JSON.stringify(meta)}`);
+    const totalPages = meta.lastPage || meta.last_page || meta.total_pages || meta.pages || 1;
     if (pagina >= totalPages || items.length < 100) break;
     pagina++;
   }
