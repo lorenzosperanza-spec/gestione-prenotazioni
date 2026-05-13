@@ -855,7 +855,6 @@ const trovaTramiteNomeSmartPMS = async (nome) => {
 };
 
 const normalizzaReservationSmartPMS = (r) => {
-  // API pubblica ciaobooking: unit.name, property.name, start_date, end_date, guests
   const unitName = r.unit?.name || r.unit_name || r.apartment_name || r.room?.name || '';
   const propertyName = r.property?.name || r.property_name || '';
   const checkIn = (r.start_date||r.arrival_date||r.check_in||r.checkin||'').slice(0,10);
@@ -865,7 +864,13 @@ const normalizzaReservationSmartPMS = (r) => {
     : r.given_name ? `${r.given_name||''} ${r.family_name||''}`.trim()
     : (r.client ? `${r.client.first_name||''} ${r.client.last_name||''}`.trim() : '');
   const statusStr = String(r.status||'').toLowerCase();
-  const cancellata = r.status===0||statusStr.includes('cancel')||statusStr==='cancelled'||statusStr==='canceled';
+  // status: 2=confermata, 3=cancellata (da SmartPMS), 0=bozza
+  // Logga lo status per debug
+  if (r.status !== 2) console.log(`SmartPMS status non-confermato: ${r.status} per ${r.id}`);
+  const cancellata = r.status === 3 || r.status === 0 ||
+                     statusStr.includes('cancel') || statusStr === 'cancelled' ||
+                     statusStr === 'canceled' || statusStr === 'refused' ||
+                     statusStr === 'rejected' || statusStr === 'no_show';
   const nomeDisplay = unitName || propertyName || `Unit ${r.unit_id||r.id}`;
   return { unitName: nomeDisplay, propertyName, checkIn, checkOut, numOspiti, guestName, cancellata, reservationId: r.id, unitId: r.unit_id };
 };
