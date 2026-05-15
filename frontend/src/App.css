@@ -1089,3 +1089,248 @@ tbody tr:hover {
   align-items: center;
   flex-wrap: wrap;
 }
+/* ============ MOBILE RESPONSIVE ============ */
+
+/* Hamburger button - nascosto su desktop */
+.btn-hamburger {
+  display: none;
+  background: none;
+  border: 1px solid rgba(255,255,255,0.3);
+  color: white;
+  font-size: 20px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+/* Header top row */
+.header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Nav desktop - visibile sempre su desktop */
+.nav-desktop {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+/* Nav mobile - nascosta di default */
+.nav-mobile {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  /* Hamburger visibile su mobile */
+  .btn-hamburger {
+    display: block;
+  }
+
+  /* Nav desktop nascosta su mobile */
+  .nav-desktop {
+    display: none;
+  }
+
+  /* Nav mobile dropdown */
+  .nav-mobile {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 8px;
+    background: rgba(0,0,0,0.15);
+    border-radius: 10px;
+    padding: 8px;
+  }
+
+  .nav-mobile button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    text-align: left;
+    font-size: 15px;
+    background: transparent;
+    color: white;
+    border: none;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .nav-mobile button:hover,
+  .nav-mobile button.active {
+    background: rgba(255,255,255,0.15);
+    font-weight: 600;
+  }
+
+  .nav-mobile-icon {
+    font-size: 18px;
+    width: 24px;
+    text-align: center;
+  }
+
+  /* Header */
+  .header {
+    padding: 12px 16px;
+  }
+
+  .header h1 {
+    font-size: 16px;
+  }
+
+  .user-badge {
+    display: none; /* nasconde il nome su mobile, rimane solo esci */
+  }
+
+  /* Main content */
+  .main {
+    padding: 12px;
+  }
+
+  /* Dashboard cards */
+  .pulizia-card {
+    border-radius: 10px;
+    padding: 14px;
+  }
+
+  .pulizia-header {
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  .pulizia-header-right {
+    width: 100%;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .assegna-select {
+    flex: 1;
+    font-size: 14px;
+    padding: 8px 10px;
+  }
+
+  .pulizia-nome {
+    font-size: 16px;
+  }
+
+  .pulizia-info {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .pulizia-azioni {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .btn-pulizia {
+    flex: 1;
+    min-width: 120px;
+    padding: 10px;
+    font-size: 14px;
+    text-align: center;
+  }
+
+  /* Day nav pills */
+  .day-nav {
+    gap: 6px;
+  }
+
+  .day-pill {
+    padding: 6px 10px;
+    min-width: 44px;
+  }
+
+  .day-pill-label {
+    font-size: 10px;
+  }
+
+  .day-pill-num {
+    font-size: 16px;
+  }
+
+  /* Dashboard header */
+  .dash-header {
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  .dash-controls {
+    width: 100%;
+  }
+
+  .dash-section-title {
+    font-size: 15px;
+    flex-wrap: wrap;
+  }
+
+  /* Tabelle - scroll orizzontale */
+  .table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Form inputs più grandi su touch */
+  input, select, textarea {
+    font-size: 16px !important; /* previene zoom su iOS */
+    min-height: 40px;
+  }
+
+  /* Login */
+  .login-box {
+    margin: 20px;
+    padding: 24px 20px;
+  }
+
+  /* Posticipa form */
+  .posticipa-form {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Note edit */
+  .pulizia-note-text {
+    font-size: 13px;
+  }
+
+  /* Panoramica compatta */
+  .dash-section > div > div {
+    padding: 12px 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .header h1 {
+    font-size: 14px;
+  }
+
+  .pulizia-nome {
+    font-size: 14px;
+  }
+
+  .btn-logout {
+    font-size: 13px;
+    padding: 6px 10px;
+  }
+
+  .day-nav-btn {
+    width: 32px;
+    height: 32px;
+    font-size: 18px;
+  }
+}
