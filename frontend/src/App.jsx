@@ -107,27 +107,51 @@ function App() {
     try { await fetch(`${API_URL}/auth/logout`, { method: 'POST', headers: authHeaders() }); } catch {}
     removeToken(); setUtente(null); setAppartamenti([]); setPrenotazioni([]); setDipendenti([]); setVista('dashboard');
   }
+  const [menuAperto, setMenuAperto] = useState(false)
+
   if (!authChecked || loading) return (<div className="loading-screen"><div className="loading-spinner" /><p>Caricamento...</p></div>)
   if (!utente) return <LoginPage onLogin={handleLogin} />
+
+  const navItems = [
+    { key: 'dashboard', label: 'Dashboard', icon: '📅' },
+    { key: 'appartamenti', label: `Appartamenti (${appartamenti.length})`, icon: '🏠' },
+    { key: 'prenotazioni', label: `Prenotazioni (${prenotazioni.length})`, icon: '📋' },
+    { key: 'dipendenti', label: `Dipendenti (${dipendenti.length})`, icon: '👥' },
+    { key: 'nuova', label: '+ Nuova', icon: '➕' },
+    { key: 'nuovo_app', label: '+ Appartamento', icon: '🏗' },
+    { key: 'import', label: 'Import', icon: '⬆' },
+    { key: 'report', label: 'Report Ore', icon: '📊' },
+    { key: 'fatturazione', label: 'Fatturazione', icon: '💰' },
+  ]
   return (
     <div className="app">
       <header className="header">
-        <h1>🏠 Gestione Prenotazioni</h1>
-        <nav>
-          <button className={vista === 'dashboard' ? 'active' : ''} onClick={() => setVista('dashboard')}>Dashboard</button>
-          <button className={vista === 'appartamenti' ? 'active' : ''} onClick={() => setVista('appartamenti')}>Appartamenti ({appartamenti.length})</button>
-          <button className={vista === 'prenotazioni' ? 'active' : ''} onClick={() => setVista('prenotazioni')}>Prenotazioni ({prenotazioni.length})</button>
-          <button className={vista === 'dipendenti' ? 'active' : ''} onClick={() => setVista('dipendenti')}>Dipendenti ({dipendenti.length})</button>
-          <button className={vista === 'nuova' ? 'active' : ''} onClick={() => setVista('nuova')}>+ Nuova</button>
-          <button className={vista === 'nuovo_app' ? 'active' : ''} onClick={() => setVista('nuovo_app')}>+ Appartamento</button>
-          <button className={vista === 'import' ? 'active' : ''} onClick={() => setVista('import')}>⬆ Import</button>
-          <button className={vista === 'report' ? 'active' : ''} onClick={() => setVista('report')}>📊 Report Ore</button>
-          <button className={vista === 'fatturazione' ? 'active' : ''} onClick={() => setVista('fatturazione')}>💰 Fatturazione</button>
-        </nav>
-        <div className="header-user">
-          <span className="user-badge">👤 {utente.nome || utente.email.split('@')[0]}</span>
-          <button className="btn-logout" onClick={handleLogout}>🚪 Esci</button>
+        <div className="header-top">
+          <h1>🏠 Gestione Prenotazioni</h1>
+          <div className="header-right">
+            <span className="user-badge">👤 {utente.nome || utente.email.split('@')[0]}</span>
+            <button className="btn-logout" onClick={handleLogout}>🚪 Esci</button>
+            <button className="btn-hamburger" onClick={() => setMenuAperto(o => !o)} aria-label="Menu">
+              {menuAperto ? '✕' : '☰'}
+            </button>
+          </div>
         </div>
+        {/* Desktop nav */}
+        <nav className="nav-desktop">
+          {navItems.map(item => (
+            <button key={item.key} className={vista === item.key ? 'active' : ''} onClick={() => setVista(item.key)}>{item.label}</button>
+          ))}
+        </nav>
+        {/* Mobile nav dropdown */}
+        {menuAperto && (
+          <nav className="nav-mobile">
+            {navItems.map(item => (
+              <button key={item.key} className={vista === item.key ? 'active' : ''} onClick={() => { setVista(item.key); setMenuAperto(false); }}>
+                <span className="nav-mobile-icon">{item.icon}</span> {item.label}
+              </button>
+            ))}
+          </nav>
+        )}
       </header>
       <main className="main">
         {vista === 'dashboard' && <Dashboard prenotazioni={prenotazioni} dipendenti={dipendenti} caricaDati={caricaDati} />}
@@ -160,9 +184,14 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
     return prenotazioni.filter(p => String(p.appartamento_id) === String(appartamento_id) && toDateStr(p.check_in) >= checkOutStr && toDateStr(p.check_out) !== checkOutStr && p.stato !== 'cancellata')
       .sort((a, b) => toDateStr(a.check_in).localeCompare(toDateStr(b.check_in)))[0] || null
   }
+  // Data intervento: se posticipata usa data_pulizia_originale (nuova data), altrimenti check_out
+  const dataIntervento = (p) => p.stato_pulizia === 'posticipata' && p.data_pulizia_originale
+    ? toDateStr(p.data_pulizia_originale)
+    : toDateStr(p.check_out)
+
   const filtraPerGiorno = (giorno) => {
     const giornoStr = toDateStr(giorno)
-    const normali = prenotazioni.filter(p => toDateStr(p.check_out) === giornoStr && p.tipo !== 'spot').map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, toDateStr(p.check_out)) }))
+    const normali = prenotazioni.filter(p => dataIntervento(p) === giornoStr && p.tipo !== 'spot').map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, toDateStr(p.check_out)) }))
     const spot = prenotazioni.filter(p => p.tipo === 'spot' && toDateStr(p.check_out) === giornoStr).map(p => ({ ...p, prossima: null }))
     return [...normali, ...spot]
   }
@@ -681,10 +710,14 @@ function ImportItalianWay({ appartamenti, onImport }) {
   const [sheetMatchOverride, setSheetMatchOverride] = useState({})
   const [smartpmsLoading, setSmartpmsLoading] = useState(false)
   const [smartpmsAnteprima, setSmartpmsAnteprima] = useState([])
+  const [smartpmsCancellazioni, setSmartpmsCancellazioni] = useState([])
   const [smartpmsRisultato, setSmartpmsRisultato] = useState(null)
   const [smartpmsSelezione, setSmartpmsSelezione] = useState({})
+  const [smartpmsSelCancellazioni, setSmartpmsSelCancellazioni] = useState({})
   const [smartpmsMappingTemp, setSmartpmsMappingTemp] = useState({})
   const [smartpmsOspitiOverride, setSmartpmsOspitiOverride] = useState({})
+  const [smoobuCancellazioni, setSmoobuCancellazioni] = useState([])
+  const [smoobuSelCancellazioni, setSmoobuSelCancellazioni] = useState({})
 
   useEffect(() => { caricaSyncLog() }, [])
   const caricaSyncLog = async () => { try { const res = await fetch(`${API_URL}/sync/status`, { headers: authHeaders() }); setSyncLog(await res.json()) } catch {} }
@@ -828,15 +861,16 @@ function ImportItalianWay({ appartamenti, onImport }) {
         <div className="sync-panel-header">
           <div><h3>🏨 Sync da SmartPMS</h3><p className="sync-desc">Legge le prenotazioni confermate da SmartPMS.</p></div>
           <button className="btn-sync" onClick={async()=>{
-            setSmartpmsLoading(true); setSmartpmsRisultato(null); setSmartpmsAnteprima([]);
+            setSmartpmsLoading(true); setSmartpmsRisultato(null); setSmartpmsAnteprima([]); setSmartpmsCancellazioni([]);
             try {
               const res=await fetch(`${API_URL}/sync/smartpms/anteprima`,{method:'POST',headers:authHeaders()});
               const data=await res.json();
               if(data.errore){setSmartpmsRisultato({errori:[data.errore]});return;}
-              const mappingInit={}; data.prenotazioni.forEach(p=>{if(!p.mappato)mappingInit[p.nome_smartpms]='';});
+              const mappingInit={}; (data.prenotazioni||[]).forEach(p=>{if(!p.mappato)mappingInit[p.nome_smartpms]='';});
               setSmartpmsMappingTemp(mappingInit);
-              const sel={}; data.prenotazioni.forEach((p,i)=>{sel[i]=!p.esistente;}); setSmartpmsSelezione(sel);
-              setSmartpmsOspitiOverride({}); setSmartpmsAnteprima(data.prenotazioni||[]);
+              const sel={}; (data.prenotazioni||[]).forEach((p,i)=>{sel[i]=!p.esistente;}); setSmartpmsSelezione(sel);
+              const selCanc={}; (data.cancellazioni||[]).forEach((c,i)=>{selCanc[i]=true;}); setSmartpmsSelCancellazioni(selCanc);
+              setSmartpmsOspitiOverride({}); setSmartpmsAnteprima(data.prenotazioni||[]); setSmartpmsCancellazioni(data.cancellazioni||[]);
             } catch(err){setSmartpmsRisultato({errori:['Errore: '+err.message]});}
             finally{setSmartpmsLoading(false);}
           }} disabled={smartpmsLoading}>
@@ -893,10 +927,30 @@ function ImportItalianWay({ appartamenti, onImport }) {
                 </tbody>
               </table>
             </div>
+            {smartpmsCancellazioni.length > 0 && (
+              <div style={{marginTop:'16px', background:'#fff7ed', border:'1px solid #fed7aa', borderRadius:'10px', padding:'16px'}}>
+                <h4 style={{margin:'0 0 10px', color:'#c2410c'}}>🗑 Cancellazioni rilevate su SmartPMS ({smartpmsCancellazioni.length})</h4>
+                <p style={{fontSize:'12px', color:'#9a3412', margin:'0 0 10px'}}>Queste prenotazioni risultano cancellate su SmartPMS ma sono ancora "confermate" nel sistema.</p>
+                <div className="table-container">
+                  <table>
+                    <thead><tr><th style={{width:'36px'}}><input type="checkbox" checked={Object.values(smartpmsSelCancellazioni).every(Boolean)} onChange={e=>{const s={};smartpmsCancellazioni.forEach((_,i)=>{s[i]=e.target.checked;});setSmartpmsSelCancellazioni(s);}}/></th><th>Appartamento</th><th>Check-in</th><th>Check-out</th><th>Ospite</th></tr></thead>
+                    <tbody>{smartpmsCancellazioni.map((c,i)=>(<tr key={i} style={{background:'#fff7ed'}}><td><input type="checkbox" checked={!!smartpmsSelCancellazioni[i]} onChange={e=>setSmartpmsSelCancellazioni(prev=>({...prev,[i]:e.target.checked}))}/></td><td><strong>{c.appartamento_nome||c.nome_smartpms}</strong></td><td style={{fontSize:'12px'}}>{c.check_in}</td><td style={{fontSize:'12px'}}>{c.check_out}</td><td style={{fontSize:'12px'}}>{c.guest_name||'—'}</td></tr>))}</tbody>
+                  </table>
+                </div>
+                <button style={{marginTop:'10px', background:'#dc2626', color:'white', border:'none', padding:'8px 16px', borderRadius:'8px', cursor:'pointer', fontSize:'13px'}}
+                  disabled={smartpmsLoading||Object.values(smartpmsSelCancellazioni).every(v=>!v)}
+                  onClick={async()=>{
+                    setSmartpmsLoading(true);
+                    const ids=smartpmsCancellazioni.filter((_,i)=>smartpmsSelCancellazioni[i]).map(c=>c.id);
+                    try{await fetch(`${API_URL}/prenotazioni/cancella-batch`,{method:'POST',headers:authHeaders(),body:JSON.stringify({ids})});setSmartpmsCancellazioni([]);setSmartpmsSelCancellazioni({});setTimeout(()=>onImport(),500);}
+                    catch{}finally{setSmartpmsLoading(false);}
+                  }}>
+                  🗑 Segna come cancellate ({Object.values(smartpmsSelCancellazioni).filter(Boolean).length})
+                </button>
+              </div>
+            )}
             <div style={{display:'flex',gap:'12px',marginTop:'16px'}}>
               <button className="btn-import" disabled={smartpmsLoading} onClick={async()=>{
-                setSmartpmsLoading(true);
-                const daImportare=smartpmsAnteprima.filter((p,i)=>smartpmsSelezione[i]!==false&&!p.esistente).map((p,_i)=>{
                   const i=smartpmsAnteprima.indexOf(p);
                   return{...p,num_ospiti:smartpmsOspitiOverride[i]??p.num_ospiti??1,appartamento_id:smartpmsMappingTemp[p.nome_smartpms]?parseInt(smartpmsMappingTemp[p.nome_smartpms]):p.appartamento_id};
                 });
@@ -1038,12 +1092,14 @@ function ImportItalianWay({ appartamenti, onImport }) {
         <div className="sync-panel-header">
           <div><h3>🏠 Sync da Smoobu</h3><p className="sync-desc">Sincronizza prenotazioni da Smoobu.</p></div>
           <button className="btn-sync" onClick={async()=>{
-            setSmoobuLoading(true); setSmoobuRisultato(null); setSmoobuAnteprima([]);
+            setSmoobuLoading(true); setSmoobuRisultato(null); setSmoobuAnteprima([]); setSmoobuCancellazioni([]);
             try{
               const res=await fetch(`${API_URL}/sync/smoobu/anteprima`,{method:'POST',headers:authHeaders()}); const data=await res.json();
               if(data.errore){setSmoobuRisultato({errori:[data.errore]});return;}
-              const mappingInit={}; data.prenotazioni.forEach(p=>{if(!p.mappato)mappingInit[p.nome_smoobu]='';});setSmoobuMappingTemp(mappingInit);
-              const sel={}; data.prenotazioni.forEach((p,i)=>{sel[i]=!p.esistente});setSmoobuSelezione(sel);setSmoobuOspitiOverride({});setSmoobuAnteprima(data.prenotazioni||[]);
+              const mappingInit={}; (data.prenotazioni||[]).forEach(p=>{if(!p.mappato)mappingInit[p.nome_smoobu]='';});setSmoobuMappingTemp(mappingInit);
+              const sel={}; (data.prenotazioni||[]).forEach((p,i)=>{sel[i]=!p.esistente});setSmoobuSelezione(sel);
+              const selCanc={}; (data.cancellazioni||[]).forEach((_,i)=>{selCanc[i]=true;}); setSmoobuSelCancellazioni(selCanc);
+              setSmoobuOspitiOverride({}); setSmoobuAnteprima(data.prenotazioni||[]); setSmoobuCancellazioni(data.cancellazioni||[]);
             }catch(err){setSmoobuRisultato({errori:['Errore connessione']});}finally{setSmoobuLoading(false);}
           }} disabled={smoobuLoading}>
             {smoobuLoading?'⏳ Caricamento...':'🏠 Leggi prenotazioni Smoobu'}
@@ -1092,6 +1148,28 @@ function ImportItalianWay({ appartamenti, onImport }) {
               }}>✅ Importa Smoobu</button>
               <button className="btn-icon btn-cancel-icon" onClick={()=>setSmoobuAnteprima([])} style={{padding:'10px 16px'}}>✕ Annulla</button>
             </div>
+            {smoobuCancellazioni.length > 0 && (
+              <div style={{marginTop:'16px', background:'#fff7ed', border:'1px solid #fed7aa', borderRadius:'10px', padding:'16px'}}>
+                <h4 style={{margin:'0 0 10px', color:'#c2410c'}}>🗑 Cancellazioni rilevate su Smoobu ({smoobuCancellazioni.length})</h4>
+                <p style={{fontSize:'12px', color:'#9a3412', margin:'0 0 10px'}}>Queste prenotazioni risultano cancellate su Smoobu ma sono ancora "confermate" nel sistema.</p>
+                <div className="table-container">
+                  <table>
+                    <thead><tr><th style={{width:'36px'}}><input type="checkbox" checked={Object.values(smoobuSelCancellazioni).every(Boolean)} onChange={e=>{const s={};smoobuCancellazioni.forEach((_,i)=>{s[i]=e.target.checked;});setSmoobuSelCancellazioni(s);}}/></th><th>Appartamento</th><th>Check-in</th><th>Check-out</th></tr></thead>
+                    <tbody>{smoobuCancellazioni.map((c,i)=>(<tr key={i} style={{background:'#fff7ed'}}><td><input type="checkbox" checked={!!smoobuSelCancellazioni[i]} onChange={e=>setSmoobuSelCancellazioni(prev=>({...prev,[i]:e.target.checked}))}/></td><td><strong>{c.appartamento_nome||c.nome_smoobu}</strong></td><td style={{fontSize:'12px'}}>{c.check_in}</td><td style={{fontSize:'12px'}}>{c.check_out}</td></tr>))}</tbody>
+                  </table>
+                </div>
+                <button style={{marginTop:'10px', background:'#dc2626', color:'white', border:'none', padding:'8px 16px', borderRadius:'8px', cursor:'pointer', fontSize:'13px'}}
+                  disabled={smoobuLoading||Object.values(smoobuSelCancellazioni).every(v=>!v)}
+                  onClick={async()=>{
+                    setSmoobuLoading(true);
+                    const ids=smoobuCancellazioni.filter((_,i)=>smoobuSelCancellazioni[i]).map(c=>c.id);
+                    try{await fetch(`${API_URL}/prenotazioni/cancella-batch`,{method:'POST',headers:authHeaders(),body:JSON.stringify({ids})});setSmoobuCancellazioni([]);setSmoobuSelCancellazioni({});setTimeout(()=>onImport(),500);}
+                    catch{}finally{setSmoobuLoading(false);}
+                  }}>
+                  🗑 Segna come cancellate ({Object.values(smoobuSelCancellazioni).filter(Boolean).length})
+                </button>
+              </div>
+            )}
           </div>
         )}
         {smoobuRisultato && !smoobuAnteprima.length && (
@@ -1234,8 +1312,188 @@ function ReportOreDipendenti({ prenotazioni, dipendenti, appartamenti }) {
   );
 }
 
-/* ============ FATTURAZIONE APPARTAMENTI ============ */
 function FatturazioneAppartamenti({ prenotazioni, appartamenti, dipendenti }) {
+  const oggi = new Date();
+  const [meseSelezionato, setMeseSelezionato] = useState(oggi.getMonth());
+  const [annoSelezionato, setAnnoSelezionato] = useState(oggi.getFullYear());
+  // extra locale per UI ottimistica — il valore vero viene dal DB (p.extra)
+  const [extraLocale, setExtraLocale] = useState({});
+  const [savingExtra, setSavingExtra] = useState({});
+  const mesi = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+  const anni = [oggi.getFullYear() - 1, oggi.getFullYear(), oggi.getFullYear() + 1];
+  const toDateStr = (d) => typeof d === 'string' ? d.slice(0,10) : d.toISOString().slice(0,10);
+
+  const salvaExtra = async (prenId, valore) => {
+    setSavingExtra(prev => ({ ...prev, [prenId]: true }));
+    try {
+      await fetch(`${API_URL}/prenotazioni/${prenId}/extra`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ extra: parseFloat(valore) || 0 }) });
+    } catch (err) { console.error('Errore salvataggio extra:', err); }
+    finally { setSavingExtra(prev => ({ ...prev, [prenId]: false })); }
+  };
+
+  const getExtra = (p) => extraLocale[p.id] !== undefined ? extraLocale[p.id] : (parseFloat(p.extra) || 0);
+
+  const prenotazioneMese = prenotazioni.filter(p => {
+    if (!p.check_out || p.stato === 'cancellata') return false;
+    const co = new Date(p.check_out.slice(0,10));
+    return co.getMonth() === meseSelezionato && co.getFullYear() === annoSelezionato;
+  });
+  const recapPerAppartamento = appartamenti.map(app => {
+    const pulizie = prenotazioneMese.filter(p => String(p.appartamento_id) === String(app.id));
+    const numPulizie = pulizie.length;
+    const prezzoUnitario = parseFloat(app.pulizia_costo || app.prezzo || 0);
+    const costoImponibile = prezzoUnitario * numPulizie;
+    const biancheriaUnitaria = parseFloat(app.biancheria || 0);
+    const costoImponibileBiancheria = pulizie.reduce((acc, p) => acc + biancheriaUnitaria * (parseInt(p.num_ospiti) || 1), 0);
+    const totaleExtra = pulizie.reduce((acc, p) => acc + getExtra(p), 0);
+    const totale = costoImponibile + costoImponibileBiancheria + totaleExtra;
+    const dipendentiUsati = [...new Set(pulizie.map(p => p.dipendente_id).filter(Boolean))].map(id => { const dip = dipendenti.find(d => String(d.id) === String(id)); return dip?.nome_cognome || ''; }).filter(Boolean);
+    return { app, numPulizie, prezzoUnitario, costoImponibile, biancheriaUnitaria, costoImponibileBiancheria, totaleExtra, totale, dipendentiUsati, pulizie };
+  }).filter(r => r.numPulizie > 0);
+  const totaleGenerale = recapPerAppartamento.reduce((acc, r) => acc + r.totale, 0);
+  const totalePulizie = recapPerAppartamento.reduce((acc, r) => acc + r.costoImponibile, 0);
+  const totaleBiancheria = recapPerAppartamento.reduce((acc, r) => acc + r.costoImponibileBiancheria, 0);
+  const totaleExtraGenerale = recapPerAppartamento.reduce((acc, r) => acc + r.totaleExtra, 0);
+  const totalePulizieNum = recapPerAppartamento.reduce((acc, r) => acc + r.numPulizie, 0);
+  const fmtEuro = (v) => `€${Number(v).toFixed(2)}`;
+  const fmtData = (d) => new Date(d).toLocaleDateString('it-IT', {day:'numeric', month:'short'});
+
+  const esportaExcel = () => {
+    const righe = [];
+    for (const r of recapPerAppartamento) {
+      for (const p of r.pulizie) {
+        const dip = dipendenti.find(d => String(d.id) === String(p.dipendente_id));
+        const numOspiti = parseInt(p.num_ospiti) || 1;
+        const biancheriaRiga = r.biancheriaUnitaria * numOspiti;
+        const extraRiga = getExtra(p);
+        righe.push({ 'Appartamento': r.app.nome, 'Owner': r.app.owner || '', 'Gestore': r.app.gestore || '', 'Data Pulizia': p.check_out ? p.check_out.slice(0,10) : '', 'Check-in': p.check_in ? p.check_in.slice(0,10) : '', 'Num Ospiti': numOspiti, 'Dipendente': dip?.nome_cognome || '', 'Stato': p.stato_pulizia || 'da_fare', 'Note': p.note || '', 'Costo Pulizia €': r.prezzoUnitario, 'Biancheria €': biancheriaRiga, 'Extra €': extraRiga, 'Totale Riga €': r.prezzoUnitario + biancheriaRiga + extraRiga });
+      }
+      righe.push({ 'Appartamento': `SUBTOTALE — ${r.app.nome}`, 'Data Pulizia': `${r.numPulizie} pulizie`, 'Dipendente': r.dipendentiUsati.join(', '), 'Costo Pulizia €': r.costoImponibile, 'Biancheria €': r.costoImponibileBiancheria, 'Extra €': r.totaleExtra, 'Totale Riga €': r.totale });
+      righe.push({});
+    }
+    righe.push({ 'Appartamento': 'TOTALE GENERALE', 'Data Pulizia': `${totalePulizieNum} pulizie`, 'Costo Pulizia €': totalePulizie, 'Biancheria €': totaleBiancheria, 'Extra €': totaleExtraGenerale, 'Totale Riga €': totaleGenerale });
+    exportExcel(righe, `fatturazione_${mesi[meseSelezionato]}_${annoSelezionato}`, ['Appartamento','Owner','Gestore','Data Pulizia','Check-in','Num Ospiti','Dipendente','Stato','Note','Costo Pulizia €','Biancheria €','Extra €','Totale Riga €'], ['Appartamento','Owner','Gestore','Data Pulizia','Check-in','Num Ospiti','Dipendente','Stato','Note','Costo Pulizia €','Biancheria €','Extra €','Totale Riga €']);
+  };
+
+  return (
+    <div style={{padding:'24px'}}>
+      <div className="section-header" style={{marginBottom:'20px', flexWrap:'wrap', gap:'12px'}}>
+        <div><h2>💰 Fatturazione Mensile</h2><p style={{color:'#666', fontSize:'14px', margin:'4px 0 0'}}>Riepilogo costi pulizie per appartamento</p></div>
+        <div style={{display:'flex', gap:'10px', alignItems:'center', flexWrap:'wrap'}}>
+          <select className="edit-input" style={{width:'140px'}} value={meseSelezionato} onChange={e=>setMeseSelezionato(parseInt(e.target.value))}>{mesi.map((m,i)=><option key={i} value={i}>{m}</option>)}</select>
+          <select className="edit-input" style={{width:'90px'}} value={annoSelezionato} onChange={e=>setAnnoSelezionato(parseInt(e.target.value))}>{anni.map(a=><option key={a} value={a}>{a}</option>)}</select>
+          <button className="btn-sync" onClick={esportaExcel} disabled={recapPerAppartamento.length===0}>📥 Scarica Excel</button>
+        </div>
+      </div>
+      {recapPerAppartamento.length > 0 && (
+        <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(150px, 1fr))', gap:'12px', marginBottom:'24px'}}>
+          {[
+            {label:'Pulizie totali', value: totalePulizieNum, icon:'🧹', color:'#2d5a3d'},
+            {label:'Costo pulizie', value: fmtEuro(totalePulizie), icon:'💶', color:'#1d4ed8'},
+            {label:'Costo biancheria', value: fmtEuro(totaleBiancheria), icon:'🛏', color:'#7c3aed'},
+            {label:'Extra/Sconti', value: fmtEuro(totaleExtraGenerale), icon: totaleExtraGenerale >= 0 ? '➕' : '➖', color: totaleExtraGenerale >= 0 ? '#059669' : '#dc2626'},
+            {label:'Totale fatturabile', value: fmtEuro(totaleGenerale), icon:'💰', color:'#b45309'},
+          ].map((item,i)=>(
+            <div key={i} style={{background:'white', border:'1px solid #e5e7eb', borderRadius:'12px', padding:'16px', textAlign:'center'}}>
+              <div style={{fontSize:'24px'}}>{item.icon}</div>
+              <div style={{fontSize:'20px', fontWeight:'bold', color:item.color, margin:'4px 0'}}>{item.value}</div>
+              <div style={{fontSize:'12px', color:'#666'}}>{item.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {recapPerAppartamento.length === 0 ? (
+        <div className="sync-panel" style={{textAlign:'center', color:'#888', padding:'40px'}}>Nessuna pulizia registrata per {mesi[meseSelezionato]} {annoSelezionato}</div>
+      ) : (
+        recapPerAppartamento.map(r => (
+          <div key={r.app.id} className="sync-panel" style={{marginBottom:'16px'}}>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'12px'}}>
+              <div>
+                <strong style={{fontSize:'16px'}}>{r.app.nome}</strong>
+                {r.app.owner && <span style={{marginLeft:'8px', fontSize:'12px', color:'#888'}}>Owner: {r.app.owner}</span>}
+                {r.app.gestore && <span style={{marginLeft:'8px', fontSize:'12px', color:'#888'}}>Gestore: {r.app.gestore}</span>}
+                <div style={{marginTop:'4px', fontSize:'12px', color:'#666'}}>{r.dipendentiUsati.length > 0 && <span>👤 {r.dipendentiUsati.join(', ')}</span>}</div>
+              </div>
+              <div style={{textAlign:'right'}}>
+                <div style={{fontSize:'22px', fontWeight:'bold', color:'#2d5a3d'}}>{fmtEuro(r.totale)}</div>
+                <div style={{fontSize:'12px', color:'#888'}}>{r.numPulizie} pulizie</div>
+              </div>
+            </div>
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr><th>Data pulizia</th><th>Check-in</th><th>Ospiti</th><th>Dipendente</th><th>Stato</th><th>Note</th><th>Costo</th><th>Biancheria</th><th>Extra/Sconto</th><th>Totale</th></tr>
+                </thead>
+                <tbody>
+                  {r.pulizie.map((p,i) => {
+                    const dip = dipendenti.find(d => String(d.id) === String(p.dipendente_id));
+                    const numOspiti = parseInt(p.num_ospiti) || 1;
+                    const biancheriaRiga = r.biancheriaUnitaria * numOspiti;
+                    const extraVal = getExtra(p);
+                    const totaleRiga = r.prezzoUnitario + biancheriaRiga + extraVal;
+                    return (
+                      <tr key={i}>
+                        <td>{p.check_out ? fmtData(p.check_out) : '—'}</td>
+                        <td style={{fontSize:'12px',color:'#555'}}>{p.check_in ? fmtData(p.check_in) : '—'}</td>
+                        <td style={{textAlign:'center'}}><strong>{numOspiti}</strong></td>
+                        <td>{dip?.nome_cognome || <span style={{color:'#aaa'}}>Non assegnato</span>}</td>
+                        <td><span style={{fontSize:'11px', padding:'2px 8px', borderRadius:'12px', background: p.stato_pulizia==='completata'?'#dcfce7':p.stato_pulizia==='posticipata'?'#fef3c7':'#f3f4f6', color: p.stato_pulizia==='completata'?'#166534':p.stato_pulizia==='posticipata'?'#92400e':'#374151'}}>{p.stato_pulizia==='completata'?'✅ Completata':p.stato_pulizia==='posticipata'?'⏭ Posticipata':'🔲 Da fare'}</span></td>
+                        <td style={{fontSize:'12px', color:'#555', maxWidth:'160px'}}>{p.note ? <span title={p.note}>{p.note.length > 30 ? p.note.slice(0,30)+'…' : p.note}</span> : <span style={{color:'#ccc'}}>—</span>}</td>
+                        <td>{fmtEuro(r.prezzoUnitario)}</td>
+                        <td>{r.biancheriaUnitaria > 0 ? <span title={`€${r.biancheriaUnitaria.toFixed(2)} × ${numOspiti}`}>{fmtEuro(biancheriaRiga)}</span> : <span style={{color:'#aaa'}}>—</span>}</td>
+                        {/* EXTRA PER RIGA - si salva nel DB */}
+                        <td>
+                          <div style={{display:'flex', alignItems:'center', gap:'2px'}}>
+                            <span style={{fontSize:'11px', color:'#9ca3af'}}>€</span>
+                            <input
+                              type="number" step="0.01" placeholder="0"
+                              className="edit-input"
+                              style={{width:'80px', textAlign:'right', fontSize:'12px',
+                                color: extraVal < 0 ? '#dc2626' : extraVal > 0 ? '#059669' : '#374151',
+                                fontWeight: extraVal !== 0 ? 'bold' : 'normal',
+                                borderColor: savingExtra[p.id] ? '#f59e0b' : undefined
+                              }}
+                              value={extraLocale[p.id] !== undefined ? extraLocale[p.id] : (parseFloat(p.extra) || 0) || ''}
+                              onChange={e => setExtraLocale(prev => ({ ...prev, [p.id]: e.target.value }))}
+                              onBlur={e => salvaExtra(p.id, e.target.value)}
+                              title="Positivo = supplemento, Negativo = sconto. Si salva automaticamente."
+                            />
+                          </div>
+                        </td>
+                        <td><strong style={{color: totaleRiga !== r.prezzoUnitario + biancheriaRiga ? '#2d5a3d' : 'inherit'}}>{fmtEuro(totaleRiga)}</strong></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{background:'#f9fafb', fontWeight:'bold'}}>
+                    <td colSpan={6} style={{textAlign:'right', paddingRight:'12px'}}>Subtotale {r.app.nome}:</td>
+                    <td>{fmtEuro(r.costoImponibile)}</td>
+                    <td>{fmtEuro(r.costoImponibileBiancheria)}</td>
+                    <td style={{color: r.totaleExtra < 0 ? '#dc2626' : r.totaleExtra > 0 ? '#059669' : '#374151'}}>{r.totaleExtra !== 0 ? fmtEuro(r.totaleExtra) : '—'}</td>
+                    <td style={{color:'#2d5a3d'}}>{fmtEuro(r.totale)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        ))
+      )}
+      {recapPerAppartamento.length > 0 && (
+        <div style={{background:'#2d5a3d', color:'white', borderRadius:'12px', padding:'20px', display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:'8px'}}>
+          <div>
+            <div style={{fontSize:'18px', fontWeight:'bold'}}>Totale Generale — {mesi[meseSelezionato]} {annoSelezionato}</div>
+            <div style={{fontSize:'13px', opacity:0.8}}>{totalePulizieNum} pulizie · {recapPerAppartamento.length} appartamenti{totaleExtraGenerale !== 0 && ` · Extra/Sconti: ${totaleExtraGenerale > 0 ? '+' : ''}${fmtEuro(totaleExtraGenerale)}`}</div>
+          </div>
+          <div style={{textAlign:'right'}}>
+            <div style={{fontSize:'28px', fontWeight:'bold'}}>{fmtEuro(totaleGenerale)}</div>
+            <div style={{fontSize:'12px', opacity:0.8}}>Pulizie {fmtEuro(totalePulizie)} + Biancheria {fmtEuro(totaleBiancheria)}{totaleExtraGenerale !== 0 && ` + Extra ${fmtEuro(totaleExtraGenerale)}`}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
   const oggi = new Date();
   const [meseSelezionato, setMeseSelezionato] = useState(oggi.getMonth());
   const [annoSelezionato, setAnnoSelezionato] = useState(oggi.getFullYear());
