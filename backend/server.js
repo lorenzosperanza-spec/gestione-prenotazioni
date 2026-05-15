@@ -166,6 +166,7 @@ app.get('/api/prenotazioni', requireAuth, async (req, res) => {
     await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS stato_pulizia VARCHAR(20) DEFAULT 'da_fare'`).catch(() => {});
     await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS data_pulizia_originale DATE`).catch(() => {});
     await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) DEFAULT 'prenotazione'`).catch(() => {});
+    await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS extra NUMERIC DEFAULT 0`).catch(() => {});
     const result = await pool.query(`
       SELECT p.*, a.nome as appartamento_nome, a.via, a.pulizia, a.biancheria, a.logistica,
              d.nome_cognome as dipendente_nome
@@ -267,6 +268,16 @@ app.delete('/api/dipendenti/:id', requireAuth, async (req, res) => {
 });
 
 // ============ ROUTES PULIZIE ============
+app.patch('/api/prenotazioni/:id/extra', requireAuth, async (req, res) => {
+  try {
+    await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS extra NUMERIC DEFAULT 0`).catch(() => {});
+    const { extra } = req.body;
+    const result = await pool.query(`UPDATE prenotazioni SET extra=$1 WHERE id=$2 RETURNING *`, [extra ?? 0, req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Prenotazione non trovata' });
+    res.json(result.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.patch('/api/prenotazioni/:id/assegna', requireAuth, async (req, res) => {
   try {
     await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS dipendente_id INTEGER`);
@@ -285,10 +296,16 @@ app.patch('/api/prenotazioni/:id/stato-pulizia', requireAuth, async (req, res) =
     await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS stato_pulizia VARCHAR(20) DEFAULT 'da_fare'`);
     await pool.query(`ALTER TABLE prenotazioni ADD COLUMN IF NOT EXISTS data_pulizia_originale DATE`);
     if (stato_pulizia === 'posticipata' && nuova_data) {
+      // Salva la data originale di check_out la prima volta che si posticipa
       const orig = await pool.query(`SELECT check_out, data_pulizia_originale FROM prenotazioni WHERE id=$1`, [req.params.id]);
       const dataOriginale = orig.rows[0]?.data_pulizia_originale || orig.rows[0]?.check_out;
-      await pool.query(`UPDATE prenotazioni SET stato_pulizia=$1,check_out=$2,data_pulizia_originale=$3 WHERE id=$4`,
-        [stato_pulizia, nuova_data, dataOriginale, req.params.id]);
+      // NON modifica check_out — usa data_pulizia_originale come "data intervento posticipata"
+      // Il frontend usa data_pulizia_originale per sapere quando mostrare la card
+      await pool.query(`UPDATE prenotazioni SET stato_pulizia=$1,data_pulizia_originale=$2 WHERE id=$3`,
+        [stato_pulizia, nuova_data, req.params.id]);
+    } else if (stato_pulizia === 'da_fare') {
+      // Annulla posticipo: resetta anche data_pulizia_originale
+      await pool.query(`UPDATE prenotazioni SET stato_pulizia=$1,data_pulizia_originale=NULL WHERE id=$2`, [stato_pulizia, req.params.id]);
     } else {
       await pool.query(`UPDATE prenotazioni SET stato_pulizia=$1 WHERE id=$2`, [stato_pulizia, req.params.id]);
     }
@@ -683,8 +700,7 @@ const fetchSmoobuBookings = async () => {
         const aptName = aptMap[propId] || attr.apartmentName || '';
         const stato = attr.status, cancellata = stato === 0 || stato === '0' || String(stato).toLowerCase().includes('cancel');
         return { arrival: (attr.arrivalDate||'').slice(0,10), departure: (attr.departureDate||'').slice(0,10), adults: attr.numberOfGuests||attr.adults||1, children: 0, status: cancellata?'cancelled':'confirmed', apartment: { name: aptName }, guestNote: attr.guest?.notes||null };
-      });
-    } else { bookings = data.bookings || (Array.isArray(data) ? data : []); }
+      });    } else { bookings = data.bookings || (Array.isArray(data) ? data : []); }
     tuttePrenotazioni.push(...bookings);
     if (bookings.length < 100) break;
     pagina++;
@@ -705,17 +721,27 @@ app.post('/api/sync/smoobu/anteprima', requireAuth, async (req, res) => {
   try {
     const bookings = await fetchSmoobuBookings();
     const prenotazioni = [];
+    const cancellazioni = [];
     for (const b of bookings) {
       const nomeSmoobu = b.apartment?.name || ''; if (!nomeSmoobu) continue;
       const checkIn = b.arrival || '', checkOut = b.departure || ''; if (!checkIn || !checkOut) continue;
-      if ((b.status||'').toLowerCase().includes('cancel')) continue;
       const appartamento_id = await trovaTramiteNome(nomeSmoobu);
       const appNome = appartamento_id ? (await pool.query('SELECT nome FROM appartamenti WHERE id=$1', [appartamento_id])).rows[0]?.nome : null;
+      if ((b.status||'').toLowerCase().includes('cancel')) {
+        // Cerca se esiste nel DB come confermata
+        if (appartamento_id) {
+          const esistente = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3 AND stato=\'confermata\'', [appartamento_id, checkIn, checkOut]);
+          if (esistente.rows.length > 0) {
+            cancellazioni.push({ id: esistente.rows[0].id, nome_smoobu: nomeSmoobu, appartamento_id, appartamento_nome: appNome, check_in: checkIn, check_out: checkOut });
+          }
+        }
+        continue;
+      }
       let esistente = false;
       if (appartamento_id) { const dup = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, checkIn, checkOut]); esistente = dup.rows.length > 0; }
       prenotazioni.push({ nome_smoobu: nomeSmoobu, appartamento_id, appartamento_nome: appNome, check_in: checkIn, check_out: checkOut, num_ospiti: (parseInt(b.adults)||0)+(parseInt(b.children)||0)||1, portale: b.channel?.name||null, esistente, mappato: !!appartamento_id });
     }
-    res.json({ prenotazioni, totale: prenotazioni.length });
+    res.json({ prenotazioni, cancellazioni, totale: prenotazioni.length });
   } catch (err) { res.status(500).json({ errore: err.message }); }
 });
 
@@ -854,16 +880,60 @@ const trovaAppartamentoPerUnitId = async (unitId, unitName) => {
 
 app.post('/api/sync/smartpms/anteprima', requireAuth, async (req, res) => {
   try {
-    const reservations = await fetchSmartPMSCalendarReservations();
-    const prenotazioni = [];
-    for (const r of reservations) {
-      const { appartamento_id, nome: appNome } = await trovaAppartamentoPerUnitId(r.unit_id, r.unit_name);
-      let esistente = false;
-      if (appartamento_id) { const dup = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, r.check_in, r.check_out]); esistente = dup.rows.length > 0; }
-      prenotazioni.push({ reservation_id: r.reservation_id, unit_id: r.unit_id, nome_smartpms: r.unit_name, property_name: r.property_name, appartamento_id, appartamento_nome: appNome, check_in: r.check_in, check_out: r.check_out, num_ospiti: r.num_ospiti, guest_name: r.guest_name, note: '', esistente, mappato: !!appartamento_id });
+    // Fetch ALL reservations including non-confirmed for cancellation detection
+    const headers = await getSmartPMSHeaders();
+    const oggi = new Date();
+    const da = new Date(oggi); da.setDate(da.getDate() - 30);
+    const daStr = da.toISOString().slice(0, 10);
+    const url = `https://pms-api.smartness.com/api/3.0/calendar/data?title=Default&isActive=true&date=${daStr}&days=180&view=1&with_reservations=true&with_rates=false&with_extras=false&with_notes=false&with_bills=false&show_restrictions=false&show_length_of_stay=false&show_not_sellable=false&show_arrival_time=false&show_checkin_status=false&show_contacts=false&show_icons=false&show_ota_image=false&show_client_name=true&show_amounts=false&show_legend=false&show_ruler=false&show_hidden_rate_plans=false&show_availability=false&show_housekeeping=false&is_compact=false&is_reservation_shaped=false`;
+    const calRes = await fetch(url, { headers });
+    if (!calRes.ok) throw new Error(`Errore SmartPMS: ${calRes.status}`);
+    const data = await calRes.json();
+    const properties = data.data?.collection || [];
+    const prenotazioni = [], cancellazioni = [], visti = new Set();
+    for (const property of properties) {
+      for (const unitCat of property.unit_categories || []) {
+        for (const unit of unitCat.units || []) {
+          const unitId = unit.id, unitName = unit.name || `Unit ${unitId}`;
+          for (const r of unit.reservations || []) {
+            if (r.block_reason) continue;
+            const key = `${r.id}-${r.start_date}-${r.end_date}`;
+            if (visti.has(key)) continue; visti.add(key);
+            const { appartamento_id, nome: appNome } = await trovaAppartamentoPerUnitId(unitId, unitName);
+            const guestName = [r.given_name, r.family_name].filter(Boolean).join(' ').trim() || '';
+            const numOspiti = (parseInt(r.guests) || 0) + (parseInt(r.children) || 0) || 1;
+            if (r.status !== 2) {
+              // Prenotazione non confermata — cerca se esiste nel DB come confermata (cancellazione)
+              if (appartamento_id) {
+                const esistente = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3 AND stato=\'confermata\'', [appartamento_id, r.start_date, r.end_date]);
+                if (esistente.rows.length > 0) {
+                  cancellazioni.push({ id: esistente.rows[0].id, nome_smartpms: unitName, appartamento_id, appartamento_nome: appNome, check_in: r.start_date, check_out: r.end_date, guest_name: guestName, smartpms_status: r.status });
+                }
+              }
+              continue;
+            }
+            let esistente = false;
+            if (appartamento_id) { const dup = await pool.query('SELECT id FROM prenotazioni WHERE appartamento_id=$1 AND check_in=$2 AND check_out=$3', [appartamento_id, r.start_date, r.end_date]); esistente = dup.rows.length > 0; }
+            prenotazioni.push({ reservation_id: r.id, unit_id: unitId, nome_smartpms: unitName, property_name: property.name || '', appartamento_id, appartamento_nome: appNome, check_in: r.start_date, check_out: r.end_date, num_ospiti: numOspiti, guest_name: guestName, note: '', esistente, mappato: !!appartamento_id });
+          }
+        }
+      }
     }
-    res.json({ prenotazioni, totale: prenotazioni.length });
+    res.json({ prenotazioni, cancellazioni, totale: prenotazioni.length });
   } catch (err) { console.error('SmartPMS anteprima errore:', err.message); res.status(500).json({ errore: err.message }); }
+});
+
+app.post('/api/prenotazioni/cancella-batch', requireAuth, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Nessun ID fornito' });
+    let cancellate = 0;
+    for (const id of ids) {
+      await pool.query(`UPDATE prenotazioni SET stato='cancellata' WHERE id=$1`, [id]);
+      cancellate++;
+    }
+    res.json({ cancellate });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/api/smartpms/mapping', requireAuth, async (req, res) => {
