@@ -147,12 +147,10 @@ function App() {
 /* ============ DASHBOARD ============ */
 function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
   const [modalita, setModalita] = useState('panoramica')
-  const [orizzonte, setOrizzonte] = useState(14)
   const [giornoOffset, setGiornoOffset] = useState(0)
   const [assegnazioni, setAssegnazioni] = useState({})
   const oggi = new Date(); oggi.setHours(0, 0, 0, 0)
   const giornoSelezionato = new Date(oggi); giornoSelezionato.setDate(oggi.getDate() + giornoOffset)
-  const fineOrizzonte = new Date(oggi); fineOrizzonte.setDate(oggi.getDate() + orizzonte)
   const toDateStr = (d) => {
     if (typeof d === 'string') return d.slice(0, 10)
     const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0')
@@ -170,8 +168,6 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
   }
   const pulizieOggi = filtraPerGiorno(oggi)
   const domani = new Date(oggi); domani.setDate(oggi.getDate() + 1)
-  const pulizieFuture = prenotazioni.filter(p => { const co = toDateStr(p.check_out); return co >= toDateStr(domani) && co <= toDateStr(fineOrizzonte) })
-    .sort((a, b) => toDateStr(a.check_out).localeCompare(toDateStr(b.check_out))).map(p => ({ ...p, prossima: prossimaPren(p.appartamento_id, toDateStr(p.check_out)) }))
   const pulizieGiornoSel = filtraPerGiorno(giornoSelezionato)
   const giorniA = (dateStr) => Math.round((new Date(toDateStr(dateStr)) - new Date(toDateStr(oggi))) / 86400000)
   const fmtData = (dateStr) => { const [y, m, d] = toDateStr(dateStr).split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' }) }
@@ -274,7 +270,7 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
         <div style={{display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap'}}>
           <h2>{oggi.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h2>
           <button className="btn-sync" style={{fontSize:'13px'}} onClick={() => {
-            const dati = [...pulizieOggi, ...pulizieFuture].map(p => ({ appartamento: p.appartamento_nome || '', checkout: p.check_out ? p.check_out.slice(0,10) : '', prossimo_checkin: p.prossima?.check_in ? p.prossima.check_in.slice(0,10) : '', ospiti: p.prossima?.num_ospiti || p.num_ospiti || '', dipendente: p.dipendente_nome || '', stato: p.stato_pulizia || 'da_fare', note: p.note || '' }));
+            const dati = pulizieOggi.map(p => ({ appartamento: p.appartamento_nome || '', checkout: p.check_out ? p.check_out.slice(0,10) : '', prossimo_checkin: p.prossima?.check_in ? p.prossima.check_in.slice(0,10) : '', ospiti: p.prossima?.num_ospiti || p.num_ospiti || '', dipendente: p.dipendente_nome || '', stato: p.stato_pulizia || 'da_fare', note: p.note || '' }));
             exportExcel(dati, 'dashboard_pulizie', ['Appartamento','Check-out','Prossimo Check-in','Ospiti','Dipendente','Stato','Note'], ['appartamento','checkout','prossimo_checkin','ospiti','dipendente','stato','note']);
           }}>📥 Scarica Excel</button>
         </div>
@@ -283,26 +279,54 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
             <button className={modalita === 'panoramica' ? 'active' : ''} onClick={() => setModalita('panoramica')}>📅 Panoramica</button>
             <button className={modalita === 'giorno' ? 'active' : ''} onClick={() => setModalita('giorno')}>🔍 Per giorno</button>
           </div>
-          {modalita === 'panoramica' && (
-            <div className="orizzonte-toggle">
-              <button className={orizzonte === 14 ? 'active' : ''} onClick={() => setOrizzonte(14)}>2 settimane</button>
-              <button className={orizzonte === 30 ? 'active' : ''} onClick={() => setOrizzonte(30)}>1 mese</button>
-            </div>
-          )}
         </div>
       </div>
-      {modalita === 'panoramica' && (
-        <>
-          <section className="dash-section">
-            <h3 className="dash-section-title">🧹 Pulizie oggi ({pulizieOggi.length})</h3>
-            {pulizieOggi.length === 0 ? <p className="dash-empty">Nessuna pulizia prevista per oggi</p> : pulizieOggi.map(p => <PuliziaCard key={p.id} p={p} evidenzia />)}
-          </section>
-          <section className="dash-section">
-            <h3 className="dash-section-title">📅 Prossime pulizie — {orizzonte === 14 ? '2 settimane' : '1 mese'} ({pulizieFuture.length})</h3>
-            {pulizieFuture.length === 0 ? <p className="dash-empty">Nessuna pulizia nei prossimi {orizzonte} giorni</p> : pulizieFuture.map(p => <PuliziaCard key={p.id} p={p} evidenzia={false} />)}
-          </section>
-        </>
-      )}
+
+      {/* ---- PANORAMICA: lista compatta per giorno ---- */}
+      {modalita === 'panoramica' && (() => {
+        // Raccoglie tutti i giorni futuri con almeno una pulizia (prossimi 30 giorni)
+        const fine30 = new Date(oggi); fine30.setDate(oggi.getDate() + 30);
+        const giorniConPulizie = [];
+        const cursor = new Date(oggi);
+        while (cursor <= fine30) {
+          const pulizie = filtraPerGiorno(cursor);
+          if (pulizie.length > 0) {
+            giorniConPulizie.push({ data: toDateStr(cursor), label: cursor.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }), isOggi: toDateStr(cursor) === toDateStr(oggi), pulizie });
+          }
+          cursor.setDate(cursor.getDate() + 1);
+        }
+        return (
+          <div>
+            {giorniConPulizie.length === 0 && <p className="dash-empty">Nessuna pulizia nei prossimi 30 giorni</p>}
+            {giorniConPulizie.map(({ data, label, isOggi, pulizie }) => (
+              <section key={data} className="dash-section" style={{ marginBottom: '20px' }}>
+                <h3 className="dash-section-title" style={{ marginBottom: '10px' }}>
+                  {isOggi ? '🧹 Oggi' : '📅 ' + label.charAt(0).toUpperCase() + label.slice(1)}
+                  <span style={{ fontWeight: 'normal', fontSize: '14px', color: '#666', marginLeft: '8px' }}>({pulizie.length} pulizie)</span>
+                </h3>
+                <div style={{ background: 'white', borderRadius: '10px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                  {pulizie.map((p, i) => {
+                    const dipAssegnato = assegnazioni[p.id] !== undefined ? assegnazioni[p.id] : (p.dipendente_id || null);
+                    const dipNome = dipAssegnato
+                      ? (dipendenti.find(d => String(d.id) === String(dipAssegnato))?.nome_cognome || p.dipendente_nome || 'Assegnato')
+                      : null;
+                    return (
+                      <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', borderBottom: i < pulizie.length - 1 ? '1px solid #f3f4f6' : 'none', background: isOggi ? '#f0fdf4' : 'white' }}>
+                        <span style={{ fontWeight: '600', fontSize: '14px', color: '#1f2937' }}>{p.appartamento_nome}</span>
+                        <span style={{ fontSize: '13px', color: dipNome ? '#2d5a3d' : '#9ca3af', fontStyle: dipNome ? 'normal' : 'italic' }}>
+                          {dipNome ? `👤 ${dipNome}` : '— non assegnato'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
+          </div>
+        );
+      })()}
+
+      {/* ---- PER GIORNO ---- */}
       {modalita === 'giorno' && (
         <section className="dash-section">
           <div className="day-nav">
@@ -325,7 +349,23 @@ function Dashboard({ prenotazioni, dipendenti, caricaDati }) {
             </div>
             <button className="day-nav-btn" onClick={() => setGiornoOffset(o => o + 1)}>›</button>
           </div>
-          <h3 className="dash-section-title" style={{ marginTop: '20px' }}>🧹 Pulizie {labelGiorno(giornoOffset).toLowerCase()} ({pulizieGiornoSel.length})</h3>
+          {(() => {
+            const nonAssegnati = pulizieGiornoSel.filter(p => {
+              const dipId = assegnazioni[p.id] !== undefined ? assegnazioni[p.id] : p.dipendente_id;
+              return !dipId;
+            }).length;
+            return (
+              <h3 className="dash-section-title" style={{ marginTop: '20px' }}>
+                🧹 Pulizie {giornoOffset === 0 ? 'oggi' : labelGiorno(giornoOffset).toLowerCase()} ({pulizieGiornoSel.length})
+                {nonAssegnati > 0
+                  ? <span style={{ marginLeft: '12px', fontSize: '13px', fontWeight: 'normal', color: '#dc2626', background: '#fee2e2', padding: '2px 10px', borderRadius: '12px' }}>⚠️ Non assegnati: {nonAssegnati}</span>
+                  : pulizieGiornoSel.length > 0
+                    ? <span style={{ marginLeft: '12px', fontSize: '13px', fontWeight: 'normal', color: '#16a34a', background: '#dcfce7', padding: '2px 10px', borderRadius: '12px' }}>✅ Tutti assegnati</span>
+                    : null
+                }
+              </h3>
+            );
+          })()}
           {pulizieGiornoSel.length === 0 ? <p className="dash-empty">Nessuna pulizia prevista per questo giorno</p> : pulizieGiornoSel.map(p => <PuliziaCard key={p.id} p={p} evidenzia={giornoOffset === 0} />)}
         </section>
       )}
