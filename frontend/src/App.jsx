@@ -1333,7 +1333,10 @@ function FatturazioneAppartamenti({ prenotazioni, appartamenti, dipendenti }) {
     finally { setSavingExtra(prev => ({ ...prev, [prenId]: false })); }
   };
 
-  const getExtra = (p) => extraLocale[p.id] !== undefined ? extraLocale[p.id] : (parseFloat(p.extra) || 0);
+  const getExtra = (p) => {
+    const val = extraLocale[p.id] !== undefined ? extraLocale[p.id] : (p.extra ?? 0);
+    return parseFloat(val) || 0;
+  };
 
   const prenotazioneMese = prenotazioni.filter(p => {
     if (!p.check_out || p.stato === 'cancellata') return false;
@@ -1347,7 +1350,7 @@ function FatturazioneAppartamenti({ prenotazioni, appartamenti, dipendenti }) {
     const costoImponibile = prezzoUnitario * numPulizie;
     const biancheriaUnitaria = parseFloat(app.biancheria || 0);
     const costoImponibileBiancheria = pulizie.reduce((acc, p) => acc + biancheriaUnitaria * (parseInt(p.num_ospiti) || 1), 0);
-    const totaleExtra = pulizie.reduce((acc, p) => acc + getExtra(p), 0);
+    const totaleExtra = pulizie.reduce((acc, p) => acc + (parseFloat(getExtra(p)) || 0), 0);
     const totale = costoImponibile + costoImponibileBiancheria + totaleExtra;
     const dipendentiUsati = [...new Set(pulizie.map(p => p.dipendente_id).filter(Boolean))].map(id => { const dip = dipendenti.find(d => String(d.id) === String(id)); return dip?.nome_cognome || ''; }).filter(Boolean);
     return { app, numPulizie, prezzoUnitario, costoImponibile, biancheriaUnitaria, costoImponibileBiancheria, totaleExtra, totale, dipendentiUsati, pulizie };
@@ -1430,9 +1433,7 @@ function FatturazioneAppartamenti({ prenotazioni, appartamenti, dipendenti }) {
                   {r.pulizie.map((p,i) => {
                     const dip = dipendenti.find(d => String(d.id) === String(p.dipendente_id));
                     const numOspiti = parseInt(p.num_ospiti) || 1;
-                    const biancheriaRiga = r.biancheriaUnitaria * numOspiti;
-                    const extraVal = getExtra(p);
-                    const totaleRiga = r.prezzoUnitario + biancheriaRiga + extraVal;
+                    const biancheriaRiga = parseFloat(r.biancheriaUnitaria) * numOspiti;
                     return (
                       <tr key={i}>
                         <td>{p.check_out ? fmtData(p.check_out) : '—'}</td>
@@ -1451,18 +1452,18 @@ function FatturazioneAppartamenti({ prenotazioni, appartamenti, dipendenti }) {
                               type="number" step="0.01" placeholder="0"
                               className="edit-input"
                               style={{width:'80px', textAlign:'right', fontSize:'12px',
-                                color: extraVal < 0 ? '#dc2626' : extraVal > 0 ? '#059669' : '#374151',
-                                fontWeight: extraVal !== 0 ? 'bold' : 'normal',
+                                color: getExtra(p) < 0 ? '#dc2626' : getExtra(p) > 0 ? '#059669' : '#374151',
+                                fontWeight: getExtra(p) !== 0 ? 'bold' : 'normal',
                                 borderColor: savingExtra[p.id] ? '#f59e0b' : undefined
                               }}
-                              value={extraLocale[p.id] !== undefined ? extraLocale[p.id] : (parseFloat(p.extra) || 0) || ''}
+                              value={extraLocale[p.id] !== undefined ? extraLocale[p.id] : (parseFloat(p.extra) || 0) !== 0 ? parseFloat(p.extra) : ''}
                               onChange={e => setExtraLocale(prev => ({ ...prev, [p.id]: e.target.value }))}
-                              onBlur={e => salvaExtra(p.id, e.target.value)}
+                              onBlur={e => { const v = parseFloat(e.target.value) || 0; salvaExtra(p.id, v); setExtraLocale(prev => ({ ...prev, [p.id]: v || '' })); }}
                               title="Positivo = supplemento, Negativo = sconto. Si salva automaticamente."
                             />
                           </div>
                         </td>
-                        <td><strong style={{color: totaleRiga !== r.prezzoUnitario + biancheriaRiga ? '#2d5a3d' : 'inherit'}}>{fmtEuro(totaleRiga)}</strong></td>
+                        <td><strong style={{color: (parseFloat(r.prezzoUnitario) + parseFloat(r.biancheriaUnitaria) * numOspiti + getExtra(p)) !== (parseFloat(r.prezzoUnitario) + parseFloat(r.biancheriaUnitaria) * numOspiti) ? '#2d5a3d' : 'inherit'}}>{fmtEuro(parseFloat(r.prezzoUnitario) + parseFloat(r.biancheriaUnitaria) * numOspiti + getExtra(p))}</strong></td>
                       </tr>
                     );
                   })}
