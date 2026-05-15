@@ -951,15 +951,17 @@ function ImportItalianWay({ appartamenti, onImport }) {
             )}
             <div style={{display:'flex',gap:'12px',marginTop:'16px'}}>
               <button className="btn-import" disabled={smartpmsLoading} onClick={async()=>{
+                setSmartpmsLoading(true);
+                const daImportare=smartpmsAnteprima.filter((p,i)=>smartpmsSelezione[i]!==false&&!p.esistente).map((p)=>{
                   const i=smartpmsAnteprima.indexOf(p);
                   return{...p,num_ospiti:smartpmsOspitiOverride[i]??p.num_ospiti??1,appartamento_id:smartpmsMappingTemp[p.nome_smartpms]?parseInt(smartpmsMappingTemp[p.nome_smartpms]):p.appartamento_id};
                 });
-                try{const res=await fetch(`${API_URL}/sync/smartpms`,{method:'POST',headers:authHeaders(),body:JSON.stringify({prenotazioni:daImportare})});const data=await res.json();setSmartpmsRisultato(data);setSmartpmsAnteprima([]);if(data.importate>0)setTimeout(()=>onImport(),1500);}
+                try{const res=await fetch(`${API_URL}/sync/smartpms`,{method:'POST',headers:authHeaders(),body:JSON.stringify({prenotazioni:daImportare})});const data=await res.json();setSmartpmsRisultato(data);setSmartpmsAnteprima([]);setSmartpmsCancellazioni([]);if(data.importate>0)setTimeout(()=>onImport(),1500);}
                 catch{setSmartpmsRisultato({errori:['Errore connessione']});}finally{setSmartpmsLoading(false);}
               }}>
                 {smartpmsLoading?'⏳ Importazione...':`✅ Importa SmartPMS (${smartpmsAnteprima.filter((p,i)=>smartpmsSelezione[i]!==false&&!p.esistente).length})`}
               </button>
-              <button className="btn-icon btn-cancel-icon" onClick={()=>setSmartpmsAnteprima([])} style={{padding:'10px 16px'}}>✕ Annulla</button>
+              <button className="btn-icon btn-cancel-icon" onClick={()=>{setSmartpmsAnteprima([]);setSmartpmsCancellazioni([]);}} style={{padding:'10px 16px'}}>✕ Annulla</button>
             </div>
           </div>
         )}
